@@ -6,7 +6,6 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
-import { ok } from 'assert';
 
 // ============================================
 // DTOs & Types
@@ -20,7 +19,7 @@ interface ProgramDay {
   exercises: {
     exercise_id: string;
     planned_sets: number;
-    planned_reps: string;
+    planned_reps: number;
     planned_weight?: number;
     rest_seconds?: number;
     sort_order: number;
@@ -62,7 +61,7 @@ interface AddExerciseDto {
   program_day_id: string;
   exercise_id: string;
   planned_sets: number;
-  planned_reps: string;
+  planned_reps: number;
   planned_weight?: number;
   rest_seconds?: number;
   sort_order: number;
@@ -71,7 +70,7 @@ interface AddExerciseDto {
 
 interface UpdateExerciseDto {
   planned_sets?: number;
-  planned_reps?: string;
+  planned_reps?: number;
   planned_weight?: number;
   rest_seconds?: number;
   sort_order?: number;
@@ -80,6 +79,7 @@ interface UpdateExerciseDto {
 
 interface LogWorkoutDto {
   program_day_id: string;
+  workout_id: string;
   workout_date: string;
 }
 
@@ -90,7 +90,7 @@ interface LogExerciseDto {
   sets: Array<{
     weight: number;
     reps: number;
-    rpe?: number;
+    set_number: number;
     note?: string;
   }>;
 }
@@ -347,11 +347,11 @@ export class ProgramsService {
     const { data, error } = await this.supabase
       .from('user_program_days')
       .insert(dto)
-      .select()
+      .select('id')
       .single();
 
     if (error) throw new Error(error.message);
-    return data;
+    return { id: data.id };
   }
 
   // Update day details
@@ -424,21 +424,59 @@ export class ProgramsService {
     return data;
   }
 
+  async updateProgramDayName(user_program_day_id: string, name: string) {
+    const { data, error } = await this.supabase
+      .from('user_program_days')
+      .update({ day_name: name })
+      .eq('id', user_program_day_id)
+
+      .single();
+
+    if (error) throw new NotFoundException('Day not found');
+    return data;
+  }
+
   // ============================================
   // EXERCISE MANAGEMENT (COACH)
   // ============================================
 
   async getAllExercises() {
-    const { data, error } = await this.supabase.from('exercises').select('*');
+    const { data, error } = await this.supabase
+      .from('exercises')
+      .select('id, name, muscle_group')
+      .order('name');
     if (error) throw new Error(error.message);
     return data;
   }
 
   // Add exercise to a day
-  async addExerciseToDay(dto: AddExerciseDto[]) {
+  async addExerciseToDay(dto: AddExerciseDto | AddExerciseDto[]) {
+    const items = Array.isArray(dto) ? dto : [dto];
+    console.log('Adding exercises to day:', items);
+    const sanitized = items.map(
+      ({
+        program_day_id,
+        exercise_id,
+        planned_sets,
+        planned_reps,
+        planned_weight,
+        rest_seconds,
+        sort_order,
+        notes,
+      }) => ({
+        program_day_id,
+        exercise_id,
+        planned_sets,
+        planned_reps,
+        planned_weight,
+        rest_seconds,
+        sort_order: sort_order + 1,
+        notes,
+      }),
+    );
     const { error } = await this.supabase
       .from('user_assigned_exercises')
-      .insert(dto);
+      .insert(sanitized);
 
     if (error) throw new Error(error.message);
     return true;
@@ -474,10 +512,30 @@ export class ProgramsService {
     const { data, error } = await this.supabase
       .from('user_assigned_exercises')
       .upsert(
-        exercises.map((ex) => ({
-          ...ex,
-          updated_at: new Date().toISOString(),
-        })),
+        exercises.map(
+          ({
+            id,
+            program_day_id,
+            exercise_id,
+            planned_sets,
+            planned_reps,
+            planned_weight,
+            rest_seconds,
+            sort_order,
+            notes,
+          }) => ({
+            ...(id !== undefined && { id }),
+            ...(program_day_id !== undefined && { program_day_id }),
+            ...(exercise_id !== undefined && { exercise_id }),
+            ...(planned_sets !== undefined && { planned_sets }),
+            ...(planned_reps !== undefined && { planned_reps }),
+            ...(planned_weight !== undefined && { planned_weight }),
+            ...(rest_seconds !== undefined && { rest_seconds }),
+            ...(sort_order !== undefined && { sort_order }),
+            ...(notes !== undefined && { notes }),
+            updated_at: new Date().toISOString(),
+          }),
+        ),
         { onConflict: 'id' },
       )
       .select(
@@ -502,17 +560,51 @@ export class ProgramsService {
     return { message: 'Exercise removed successfully' };
   }
 
-  // Bulk add exercises to a day
-  async bulkAddExercisesToDay(
+  async updateAssignedExercises(
     dayId: string,
-    exercises: Omit<AddExerciseDto, 'program_day_id'>[],
+    exercises: Array<Partial<AddExerciseDto> & { id: string }>,
   ) {
-    const { data, error } = await this.supabase
-      .from('user_assigned_exercises')
-      .insert(exercises);
+    if (!exercises || exercises.length === 0) {
+      return [];
+    }
 
-    if (error) throw new Error(error.message);
-    return data;
+    const results = await Promise.all(
+      exercises.map(async (ex) => {
+        const {
+          id,
+          exercise_id,
+          planned_sets,
+          planned_reps,
+          planned_weight,
+          rest_seconds,
+          sort_order,
+          notes,
+        } = ex;
+
+        return this.supabase
+          .from('user_assigned_exercises')
+          .update({
+            ...(exercise_id !== undefined && { exercise_id }),
+            ...(planned_sets !== undefined && { planned_sets }),
+            ...(planned_reps !== undefined && { planned_reps }),
+            ...(planned_weight !== undefined && { planned_weight }),
+            ...(rest_seconds !== undefined && { rest_seconds }),
+            ...(sort_order !== undefined && { sort_order }),
+            ...(notes !== undefined && { notes }),
+            program_day_id: dayId,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', id)
+          .eq('program_day_id', dayId)
+          .select()
+          .single();
+      }),
+    );
+
+    const firstError = results.find((result) => result.error)?.error;
+    if (firstError) throw new Error(firstError.message);
+
+    return results.map((result) => result.data);
   }
 
   // ============================================
@@ -528,6 +620,7 @@ export class ProgramsService {
       .upsert(
         {
           program_day_id: dto.program_day_id,
+          user_workout_program_id: dto.workout_id,
           workout_date: workoutDate,
           completed: false,
         },
@@ -545,7 +638,6 @@ export class ProgramsService {
 
   // Log exercise sets
   async logExerciseSets(dto: LogExerciseDto) {
-    console.log('logExerciseSets', dto);
     if (!dto.sets || dto.sets.length === 0) {
       throw new BadRequestException('No sets provided');
     }
@@ -554,10 +646,9 @@ export class ProgramsService {
       workout_log_id: dto.workout_log_id,
       assigned_exercise_id: dto.assigned_exercise_id,
       exercises_id: dto.exercises_id,
-      set_number: index + 1,
+      set_number: set.set_number,
       weight: set.weight,
       reps: set.reps,
-      rpe: set.rpe || null,
       note: set.note || null,
     }));
 
@@ -565,13 +656,16 @@ export class ProgramsService {
       .from('exercise_logs')
       .insert(exerciseLogs);
 
-    console.log('logExerciseSets2', data, error);
     if (error) throw new Error(error.message);
     return true;
   }
 
   // Complete a workout
-  async completeWorkout(workoutLogId: string, durationMinutes?: number) {
+  async completeWorkout(
+    workoutLogId: string,
+    program_day_id: string,
+    durationMinutes?: number,
+  ) {
     const { data, error } = await this.supabase
       .from('workout_logs')
       .update({

@@ -9,6 +9,9 @@ export class CreateExerciseDto {
   @IsNotEmpty()
   @IsString()
   muscle_group: string;
+
+  @IsString()
+  description?: string;
 }
 
 export class UpdateExerciseDto {
@@ -17,4 +20,7 @@ export class UpdateExerciseDto {
 
   @IsString()
   muscle_group?: string;
+
+  @IsString()
+  description?: string;
 }

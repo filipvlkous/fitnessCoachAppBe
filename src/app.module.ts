@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common';
+import { CacheModule } from '@nestjs/cache-manager';
+import { redisStore } from 'cache-manager-redis-yet';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { SupabaseModule } from './supabase/supabase.module';
@@ -10,6 +12,24 @@ import { WorkoutHistoryModule } from './workoutHistory/workoutHistory.module';
 
 @Module({
   imports: [
+    CacheModule.registerAsync({
+      isGlobal: true,
+      useFactory: async () => {
+        const redisUrl = new URL(process.env.UPSTASH_REDIS_URL!);
+        return {
+          store: await redisStore({
+            password: redisUrl.password,
+            socket: {
+              host: redisUrl.hostname,
+              port: Number(redisUrl.port) || 6379,
+              tls: true,
+            },
+            ttl: 60 * 1000, // default 60s in ms
+          }),
+        };
+      },
+    }),
+    
     SupabaseModule,
     ImageAnalysisModule,
     UserModule,

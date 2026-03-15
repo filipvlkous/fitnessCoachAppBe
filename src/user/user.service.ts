@@ -8,20 +8,21 @@ export class UserService {
 
   async getAllUsers(userId: string) {
     const { data, error } = await this.supabaseService.supabase
-      .from('users') // Assuming the table is named 'users'
+      .from('user') // Assuming the table is named 'user'
       .select('first_name, last_name, id')
       .eq('coach_id', userId)
       .eq('role', 'user');
 
     if (error) {
+      if (error.code === '42703') return [];
       throw new Error(`Error fetching user: ${error.message}`);
     }
 
     return data;
   }
   async getUserById(userId: string) {
-    const { data, error } = await this.supabaseService.supabase
-      .from('users') // Assuming the table is named 'users'
+    const { data: user, error } = await this.supabaseService.supabase
+      .from('user')
       .select('*')
       .eq('id', userId)
       .single();
@@ -30,7 +31,26 @@ export class UserService {
       throw new Error(`Error fetching user: ${error.message}`);
     }
 
-    return data;
+    if (user.role !== 'user') {
+      return user;
+    }
+
+    const { data: relations, error: relationError } =
+      await this.supabaseService.supabase
+        .from('coach_user_relations')
+        .select('*')
+        .eq('user_id', user.id);
+
+    if (relationError) {
+      throw new Error(
+        `Error fetching coach relations: ${relationError.message}`,
+      );
+    }
+
+    return {
+      ...user,
+      coach_user_relations: relations,
+    };
   }
 
   async getDailyEntries(userId: string, date?: string) {
@@ -91,7 +111,7 @@ export class UserService {
 
   async updateUserFitnessMacros(userId: string, fitnessMacros: any) {
     const { data, error } = await this.supabaseService.supabase
-      .from('users') // Assuming the table is named 'users'
+      .from('user') // Assuming the table is named 'user'
       .update({
         fitness_macros: fitnessMacros, // Replace with the actual column name in your database
         updated_at: new Date().toISOString(),
@@ -102,6 +122,133 @@ export class UserService {
 
     if (error) {
       throw new Error(`Error updating fitness macros: ${error.message}`);
+    }
+
+    return data;
+  }
+
+  async assignUserToCoach(userId: string, code: string) {
+    const { data } = await this.supabaseService.supabase
+      .from('user')
+      .select('id')
+      .eq('coach_code', code)
+      .single();
+
+    if (!data) throw new Error('Invalid code');
+    const { error } = await this.supabaseService.supabase
+      .from('coach_user_relations')
+      .insert({
+        coach_id: data.id,
+        user_id: userId,
+        status: 'pending',
+      });
+
+    if (error) {
+      throw new Error(`Error assigning user to coach: ${error.message}`);
+    }
+    return true;
+  }
+
+  async getAssignedUsersToCoach(userId: string, param: string) {
+    const { data, error } = await this.supabaseService.supabase
+      .from('coach_user_relations')
+      .select(
+        `
+    id,
+    status,
+    user:coach_user_relations_user_id_fkey (
+      user_id:id,
+      first_name,
+      last_name,
+      email
+    )
+  `,
+      )
+      .eq(param, userId)
+      .in('status', ['approved', 'pending']);
+
+    if (error) {
+      throw new Error(`Error fetching assigned users: ${error.message}`);
+    }
+
+    return data;
+  }
+
+  async approveUser(relationId: string, userId: string) {
+    const { error } = await this.supabaseService.supabase
+      .from('coach_user_relations')
+      .update({ status: 'approved' })
+      .eq('id', relationId);
+
+    if (error) {
+      throw new Error(`Error approving user: ${error.message}`);
+    }
+
+    const { data, error: userError } = await this.supabaseService.supabase
+      .from('user_workout_programs')
+      .insert({
+        user_id: userId,
+        name: 'First Program',
+        start_date: new Date().toISOString().split('T')[0],
+        end_date: null,
+        status: 'active',
+        workout_streek: 0,
+      })
+      .select()
+      .single();
+
+    if (userError) {
+      throw new Error(`Error approving user: ${userError.message}`);
+    }
+
+    return data;
+  }
+
+  async rejectUser(relationId: string) {
+    const { data, error } = await this.supabaseService.supabase
+      .from('coach_user_relations')
+      .delete()
+      .eq('id', relationId)
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(`Error rejecting user: ${error.message}`);
+    }
+
+    return data;
+  }
+
+  async getWeightHistory(userId: string, limit: number = 6) {
+    const { data, error } = await this.supabaseService.supabase
+      .from('user_weight')
+      .select('weight, created_at')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+      console.log('Weight history data:', data);
+
+    if (error) {
+      throw new Error(`Error fetching weight history: ${error.message}`);
+    }
+
+    return data;
+  }
+
+
+  async addWeightEntry(userId: string, weight: number, date?: string) {
+    const { data, error } = await this.supabaseService.supabase
+      .from('user_weight')
+      .insert({
+        user_id: userId,
+        weight,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(`Error adding weight entry: ${error.message}`);
     }
 
     return data;

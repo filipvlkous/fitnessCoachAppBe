@@ -38,7 +38,6 @@ export class ImageAnalysisController {
   @Post('food/macronutrients')
   async saveMacronutrients(@Body() macronutrientDto: AnalyzeFoodResponseDto) {
     try {
-      console.log(macronutrientDto);
       const macronutrientData: string =
         await this.imageAnalysisService.getMacronutrients(macronutrientDto);
 

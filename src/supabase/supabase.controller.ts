@@ -1,21 +1,17 @@
-import { Controller, Get, Query, Param } from '@nestjs/common';
+import { Controller, Get, Query, Param, UseGuards, Req } from '@nestjs/common';
 import { SupabaseService } from './supabase.service';
+import { SupabaseAuthGuard } from 'utils/AuthGuard';
 
 @Controller('supabase')
 export class SupabaseController {
-  constructor(private readonly supabaseService: SupabaseService) {}
+  constructor(public supabaseService: SupabaseService) {}
 
-  @Get(':table')
-  async fetchData(@Param('table') table: string) {
-    return this.supabaseService.fetchData(table);
-  }
-
-  @Get(':table/filter')
-  async fetchDataWithFilter(
-    @Param('table') table: string,
-    @Query('column') column: string,
-    @Query('value') value: string,
-  ) {
-    return this.supabaseService.fetchDataWithFilter(table, column, value);
+  @Get('user')
+  @UseGuards(SupabaseAuthGuard)
+  getUser(@Req() req) {
+    return {
+      email: req.user.email,
+      id: req.user.id,
+    };
   }
 }

@@ -6,6 +6,7 @@ import {
   Delete,
   Body,
   Param,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { UserService } from './user.service';
@@ -44,7 +45,6 @@ export class UserController {
       id,
       date ? localDateStr(date) : new Date().toLocaleDateString(),
     );
-    console.log(goal);
     if (!goal) return null;
 
     return goal;
@@ -53,5 +53,50 @@ export class UserController {
   @Get('dailyMeals/:id')
   async getDailyMeals(@Param('id') id: string) {
     return this.userService.getDailyMeals(id);
+  }
+
+  @Post('assign-user-to-coach/:userId')
+  async assignUserToCoach(
+    @Param('userId') userId: string,
+    @Body('code') code: string,
+  ) {
+    return this.userService.assignUserToCoach(userId, code);
+  }
+
+  @Post('coach-assigned-users/:userId')
+  async getAssignedUsersToCoach(
+    @Param('userId') userId: string,
+    @Body('param') param: string,
+  ) {
+    return this.userService.getAssignedUsersToCoach(userId, param);
+  }
+
+  @Post('coach-assigned-users/:userId/update/:relationId')
+  async postAssignedUsersToCoachUpdate(
+    @Param('relationId') relationId: string,
+    @Param('userId') userId: string,
+    @Body('status') status: boolean,
+  ) {
+    if (status) {
+      return this.userService.approveUser(relationId, userId);
+    } else {
+      return this.userService.rejectUser(relationId);
+    }
+  }
+
+  @Get('weight-history/:id')
+  async getWeightHistory(
+    @Param('id') id: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.userService.getWeightHistory(id, limit ? Number(limit) : 6);
+  }
+
+  @Post('weight/:id')
+  async addWeightEntry(
+    @Param('id') id: string,
+    @Body('weight') weight: number,
+  ) {
+    return this.userService.addWeightEntry(id, weight);
   }
 }

@@ -24,8 +24,9 @@ export class ProgramExerciseDto {
   @Min(1)
   planned_sets: number;
 
-  @IsString()
-  planned_reps: string;
+  @IsNumber()
+  @Min(1)
+  planned_reps: number;
 
   @IsNumber()
   @IsOptional()
@@ -166,8 +167,9 @@ export class AddExerciseDto {
   @Min(1)
   planned_sets: number;
 
-  @IsString()
-  planned_reps: string;
+  @IsNumber()
+  @Min(1)
+  planned_reps: number;
 
   @IsNumber()
   @IsOptional()
@@ -191,9 +193,10 @@ export class UpdateExerciseDto {
   @IsOptional()
   planned_sets?: number;
 
-  @IsString()
+  @IsNumber()
   @IsOptional()
-  planned_reps?: string;
+  @Min(1)
+  planned_reps?: number;
 
   @IsNumber()
   @IsOptional()
@@ -212,11 +215,21 @@ export class UpdateExerciseDto {
   notes?: string;
 }
 
-export class BulkAddExercisesDto {
+export class UpdateAssignedExerciseDto extends UpdateExerciseDto {
+  @IsOptional()
+  @IsString()
+  id: string;
+
+  @IsString()
+  @IsOptional()
+  exercise_id?: string;
+}
+
+export class UpdateExercisesDto {
   @IsArray()
   @ValidateNested({ each: true })
-  @Type(() => ProgramExerciseDto)
-  exercises: ProgramExerciseDto[];
+  @Type(() => UpdateAssignedExerciseDto)
+  exercises: UpdateAssignedExerciseDto[];
 }
 
 // ============================================
@@ -226,6 +239,9 @@ export class BulkAddExercisesDto {
 export class LogWorkoutDto {
   @IsString()
   program_day_id: string;
+
+  @IsString()
+  workout_id: string;
 
   @IsDateString()
   workout_date: string;
@@ -251,6 +267,10 @@ export class ExerciseSetDto {
   @IsString()
   @IsOptional()
   note?: string;
+
+  @IsNumber()
+  @Min(1)
+  set_number: number;
 }
 
 export class LogExerciseDto {

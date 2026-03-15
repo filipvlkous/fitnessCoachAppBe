@@ -217,7 +217,6 @@ OUTPUT â€¢ Return **only** a JSON object that exactly matches the schema belowâ€
       });
 
       if (!response || !response.text) return;
-      console.log(response.text);
 
       // this.supabaseService.saveFoodItems(
       //   response.foodItems,

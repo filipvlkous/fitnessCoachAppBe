@@ -12,30 +12,23 @@ export class SupabaseService {
     );
   }
 
+  async validateUserToken(token: string) {
+    const { data, error } = await this.supabase.auth.getUser(token);
+
+    if (error || !data.user) {
+      throw new Error('Invalid token');
+    }
+
+    return data.user; // { id, email, role, etc. }
+  }
+
   getClient(): SupabaseClient {
     return this.supabase;
   }
 
   async fetchData(table: string) {
     const { data, error } = await this.supabase.from(table).select('*');
-
-    if (error) {
-      throw new Error(`Error fetching data: ${error.message}`);
-    }
-
-    return data;
-  }
-
-  async fetchDataWithFilter(table: string, column: string, value: any) {
-    const { data, error } = await this.supabase
-      .from(table)
-      .select('*')
-      .eq(column, value);
-
-    if (error) {
-      throw new Error(`Error fetching data: ${error.message}`);
-    }
-
+    if (error) throw new Error(`Error fetching data: ${error.message}`);
     return data;
   }
 
