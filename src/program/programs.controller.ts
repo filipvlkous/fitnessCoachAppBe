@@ -10,6 +10,7 @@ import {
   Query,
   Inject,
   UseInterceptors,
+  UseGuards,
 } from '@nestjs/common';
 import {
   CACHE_MANAGER,
@@ -19,8 +20,10 @@ import {
 import * as CacheManagerTypes from 'cache-manager';
 import { ProgramsService } from './programs.service';
 import * as dto from './dto/program.dto';
+import { SupabaseAuthGuard } from 'utils/AuthGuard';
 
 @Controller('programs')
+@UseGuards(SupabaseAuthGuard)
 export class ProgramsController {
   constructor(
     private programsService: ProgramsService,

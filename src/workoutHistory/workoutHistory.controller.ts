@@ -1,6 +1,16 @@
-import { Body, Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 
 import { WorkoutHistoryService } from './workoutHistory.service';
+import { SupabaseAuthGuard } from 'utils/AuthGuard';
+import * as authenticatedRequestInterface from 'utils/authenticated-request.interface';
 
 export type WorkoutDayStatus = 'done' | 'partial' | 'empty' | 'rest';
 
@@ -14,17 +24,17 @@ export interface WeekDayStatus {
 }
 
 class WeekStatusDto {
-  userId: string;
   weekStart: string; // 'yyyy-MM-dd'
 }
 
 @Controller('workoutHistory')
-// @UseGuards(AuthGuard('jwt'))
+@UseGuards(SupabaseAuthGuard)
 export class WorkoutHistoryController {
   constructor(private readonly workoutHistoryService: WorkoutHistoryService) {}
 
   @Post()
   async getMonthHistory(
+    @Req() req: authenticatedRequestInterface.AuthenticatedRequest,
     @Body() body: { date: string; user_workout_program_id: string },
   ) {
     return await this.workoutHistoryService.getMonthHistory(
@@ -33,9 +43,11 @@ export class WorkoutHistoryController {
     );
   }
 
-  @Get(':id')
-  async getWorkoutStreak(@Param('id') id: string) {
-    return this.workoutHistoryService.getWorkoutStreek(id);
+  @Get('streak')
+  async getWorkoutStreak(
+    @Req() req: authenticatedRequestInterface.AuthenticatedRequest,
+  ) {
+    return this.workoutHistoryService.getWorkoutStreek(req.user.id);
   }
 
   @Get('userDay/:id')
@@ -44,9 +56,12 @@ export class WorkoutHistoryController {
   }
 
   @Post('week-status')
-  async getWeekStatus(@Body() body: WeekStatusDto) {
+  async getWeekStatus(
+    @Req() req: authenticatedRequestInterface.AuthenticatedRequest,
+    @Body() body: WeekStatusDto,
+  ) {
     return this.workoutHistoryService.getWeekStatus(
-      body.userId,
+      req.user.id,
       body.weekStart,
     );
   }

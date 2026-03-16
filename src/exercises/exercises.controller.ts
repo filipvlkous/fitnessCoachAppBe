@@ -11,10 +11,12 @@ import {
   UseInterceptors,
   UploadedFiles,
   BadRequestException,
+  UseGuards,
 } from '@nestjs/common';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { ExercisesService } from './exercises.service';
 import { CreateExerciseDto, UpdateExerciseDto } from './dto/exercises.dto';
+import { SupabaseAuthGuard } from 'utils/AuthGuard';
 
 interface UploadedFile {
   buffer: Buffer;
@@ -29,6 +31,7 @@ interface UploadedFiles {
 }
 
 @Controller('exercises')
+@UseGuards(SupabaseAuthGuard)
 export class ExercisesController {
   constructor(private exercisesService: ExercisesService) {}
 

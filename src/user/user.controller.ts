@@ -12,16 +12,12 @@ import {
 import { UserService } from './user.service';
 import { UpdateUserDto } from './dto/user.dto';
 import { localDateStr } from 'utils/getLocalTime';
+import { SupabaseAuthGuard } from 'utils/AuthGuard';
 
 @Controller('userController')
-// @UseGuards(AuthGuard('jwt'))
+@UseGuards(SupabaseAuthGuard)
 export class UserController {
   constructor(private readonly userService: UserService) {}
-
-  @Get('all-assigned-users-to-coach/:userId')
-  async getAllAssignedUsersToCoach(@Param('userId') userId: string) {
-    return this.userService.getAllUsers(userId);
-  }
 
   @Put('user/:id/fitness-macros')
   async updateUserFitnessMacros(
