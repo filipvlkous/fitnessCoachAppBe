@@ -13,6 +13,8 @@ export class UserService {
       .eq('coach_id', userId)
       .eq('role', 'user');
 
+      console.log('All users data:', data); 
+
     if (error) {
       if (error.code === '42703') return [];
       throw new Error(`Error fetching user: ${error.message}`);
@@ -227,7 +229,6 @@ export class UserService {
       .order('created_at', { ascending: false })
       .limit(limit);
 
-      console.log('Weight history data:', data);
 
     if (error) {
       throw new Error(`Error fetching weight history: ${error.message}`);

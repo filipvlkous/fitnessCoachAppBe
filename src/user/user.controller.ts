@@ -73,6 +73,7 @@ export class UserController {
     @Param('userId') userId: string,
     @Body('status') status: boolean,
   ) {
+    console.log(status);
     if (status) {
       return this.userService.approveUser(relationId, userId);
     } else {
