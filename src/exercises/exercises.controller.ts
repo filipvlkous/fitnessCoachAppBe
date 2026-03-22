@@ -12,11 +12,15 @@ import {
   UploadedFiles,
   BadRequestException,
   UseGuards,
+  Inject,
 } from '@nestjs/common';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
+import { CACHE_MANAGER, CacheTTL } from '@nestjs/cache-manager';
+import * as CacheManagerTypes from 'cache-manager';
 import { ExercisesService } from './exercises.service';
 import { CreateExerciseDto, UpdateExerciseDto } from './dto/exercises.dto';
 import { SupabaseAuthGuard } from 'utils/AuthGuard';
+import { UserScopedCacheInterceptor } from 'utils/user-cache.interceptor';
 
 interface UploadedFile {
   buffer: Buffer;
@@ -33,44 +37,65 @@ interface UploadedFiles {
 @Controller('exercises')
 @UseGuards(SupabaseAuthGuard)
 export class ExercisesController {
-  constructor(private exercisesService: ExercisesService) {}
+  constructor(
+    private exercisesService: ExercisesService,
+    @Inject(CACHE_MANAGER) private cacheManager: CacheManagerTypes.Cache,
+  ) {}
 
   @Post('create')
-  create(@Body() dto: CreateExerciseDto) {
-    return this.exercisesService.create(dto);
+  async create(@Body() dto: CreateExerciseDto) {
+    const result = await this.exercisesService.create(dto);
+    await this.cacheManager.del('/exercises');
+    return result;
   }
 
+  @UseInterceptors(UserScopedCacheInterceptor)
+  @CacheTTL(300000)
   @Get()
   findAll(@Query('muscle_group') muscleGroup?: string) {
     return this.exercisesService.findAll(muscleGroup);
   }
 
+  @UseInterceptors(UserScopedCacheInterceptor)
+  @CacheTTL(300000)
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.exercisesService.findOne(id);
   }
 
   @Put(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateExerciseDto) {
-    return this.exercisesService.update(id, dto);
+  async update(@Param('id') id: string, @Body() dto: UpdateExerciseDto) {
+    const result = await this.exercisesService.update(id, dto);
+    await this.cacheManager.del(`/exercises/${id}`);
+    await this.cacheManager.del(`/exercises/${id}/media`);
+    return result;
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.exercisesService.remove(id);
+  async remove(@Param('id') id: string) {
+    const result = await this.exercisesService.remove(id);
+    await this.cacheManager.del(`/exercises/${id}`);
+    await this.cacheManager.del(`/exercises/${id}/media`);
+    await this.cacheManager.del('/exercises');
+    return result;
   }
 
+  @UseInterceptors(UserScopedCacheInterceptor)
+  @CacheTTL(300000)
   @Get(':id/media')
   getMedia(@Param('id') id: string) {
     return this.exercisesService.getMedia(id);
   }
 
   @Delete(':id/media')
-  deleteMedia(
+  async deleteMedia(
     @Param('id') id: string,
     @Query('type') type: 'image' | 'video' | 'both' = 'both',
   ) {
-    return this.exercisesService.deleteMedia(id, type);
+    const result = await this.exercisesService.deleteMedia(id, type);
+    await this.cacheManager.del(`/exercises/${id}/media`);
+    await this.cacheManager.del(`/exercises/${id}`);
+    return result;
   }
 
   @Post(':exerciseId/upload-media')
@@ -104,6 +129,11 @@ export class ExercisesController {
       imageFile,
       videoFile,
     );
+
+    await Promise.all([
+      this.cacheManager.del(`/exercises/${exerciseId}`),
+      this.cacheManager.del(`/exercises/${exerciseId}/media`),
+    ]);
 
     return {
       message: 'Media uploaded and exercise updated successfully',

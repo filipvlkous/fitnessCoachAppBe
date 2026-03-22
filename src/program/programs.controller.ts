@@ -8,6 +8,7 @@ import {
   Body,
   Param,
   Query,
+  Req,
   Inject,
   UseInterceptors,
   UseGuards,
@@ -21,6 +22,10 @@ import * as CacheManagerTypes from 'cache-manager';
 import { ProgramsService } from './programs.service';
 import * as dto from './dto/program.dto';
 import { SupabaseAuthGuard } from 'utils/AuthGuard';
+import {
+  UserScopedCacheInterceptor,
+  userCacheKey,
+} from 'utils/user-cache.interceptor';
 
 @Controller('programs')
 @UseGuards(SupabaseAuthGuard)
@@ -32,13 +37,25 @@ export class ProgramsController {
 
   private async invalidateUserCache(userId: string) {
     await Promise.all([
-      this.cacheManager.del(`/programs/users/${userId}/all`),
-      this.cacheManager.del(`/programs/users/${userId}/active`),
-      this.cacheManager.del(`/programs/users/${userId}/activeWeek`),
-      this.cacheManager.del(`/programs/users/${userId}/stats`),
+      this.cacheManager.del(
+        userCacheKey(userId, `/programs/users/${userId}/all`),
+      ),
+      this.cacheManager.del(
+        userCacheKey(userId, `/programs/users/${userId}/active`),
+      ),
+      this.cacheManager.del(
+        userCacheKey(userId, `/programs/users/${userId}/activeWeek`),
+      ),
+      this.cacheManager.del(
+        userCacheKey(userId, `/programs/users/${userId}/stats`),
+      ),
     ]);
   }
 
+  // Program-level endpoints (GET /:programId, GET /:programId/progress) are
+  // cached with the plain CacheInterceptor (no user prefix) because their
+  // responses are shared across users.  Invalidation therefore uses the
+  // plain URL key, consistent with what CacheInterceptor stores.
   private async invalidateProgramCache(programId: string) {
     await Promise.all([
       this.cacheManager.del(`/programs/${programId}`),
@@ -87,21 +104,21 @@ export class ProgramsController {
     return result;
   }
 
-  @UseInterceptors(CacheInterceptor)
+  @UseInterceptors(UserScopedCacheInterceptor)
   @CacheTTL(60000)
   @Get('users/:userId/all')
   getUserPrograms(@Param('userId') userId: string) {
     return this.programsService.getUserPrograms(userId);
   }
 
-  @UseInterceptors(CacheInterceptor)
+  @UseInterceptors(UserScopedCacheInterceptor)
   @CacheTTL(60000)
   @Get('users/:userId/active')
   getUserActiveProgram(@Param('userId') userId: string) {
     return this.programsService.getUserActiveProgram(userId);
   }
 
-  @UseInterceptors(CacheInterceptor)
+  @UseInterceptors(UserScopedCacheInterceptor)
   @CacheTTL(60000)
   @Get('exercises/:program_id/active/:dayNumber')
   getUserActiveDay(
@@ -111,14 +128,14 @@ export class ProgramsController {
     return this.programsService.getUserActiveDay(program_id, dayNumber);
   }
 
-  @UseInterceptors(CacheInterceptor)
+  @UseInterceptors(UserScopedCacheInterceptor)
   @CacheTTL(60000)
   @Get('/users/:user_id/activeWeek')
   getUserActiveWeek(@Param('user_id') user_id: string) {
     return this.programsService.getUserActiveWeek(user_id);
   }
 
-  @UseInterceptors(CacheInterceptor)
+  @UseInterceptors(UserScopedCacheInterceptor)
   @CacheTTL(60000)
   @Get('coach/:coachId/programs')
   getCoachPrograms(@Param('coachId') coachId: string) {
@@ -134,14 +151,14 @@ export class ProgramsController {
     return this.programsService.createProgramDay(dayDto);
   }
 
-  @UseInterceptors(CacheInterceptor)
+  @UseInterceptors(UserScopedCacheInterceptor)
   @CacheTTL(60000)
   @Get('days/:dayId')
   getDay(@Param('dayId') dayId: string) {
     return this.programsService.getProgramDay(dayId);
   }
 
-  @UseInterceptors(CacheInterceptor)
+  @UseInterceptors(UserScopedCacheInterceptor)
   @CacheTTL(60000)
   @Get(':programId/week/:weekNumber/day/:dayNumber')
   getDayByNumber(
@@ -173,36 +190,86 @@ export class ProgramsController {
   // EXERCISE MANAGEMENT (COACH)
   // ============================================
 
-  @Post('days/exercises')
-  addExercise(
+  @Post('days/:dayId/exercises')
+  async addExercise(
     @Param('dayId') dayId: string,
-    @Body() body: { exercises: dto.AddExerciseDto[]; day_name?: string },
+    @Body() body: { exercises: dto.AddExerciseDto[] },
+    @Req() req: any,
   ) {
-    return this.programsService.addExerciseToDay(body.exercises);
+    const result = await this.programsService.addExerciseToDay(
+      body.exercises,
+      dayId,
+    );
+    await Promise.all([
+      this.cacheManager.del(
+        userCacheKey(req.user.id, `/programs/days/${dayId}`),
+      ),
+      this.invalidateUserCache(req.user.id),
+    ]);
+    return result;
   }
 
   @Post('days/:dayId/exercises/update')
-  updateExercises(
+  async updateExercises(
     @Param('dayId') dayId: string,
     @Body() updateDto: dto.UpdateExercisesDto,
+    @Req() req: any,
   ) {
-    return this.programsService.updateAssignedExercises(
+    const result = await this.programsService.updateAssignedExercises(
       dayId,
       updateDto.exercises,
     );
+    await Promise.all([
+      this.cacheManager.del(
+        userCacheKey(req.user.id, `/programs/days/${dayId}`),
+      ),
+      this.invalidateUserCache(req.user.id),
+    ]);
+    return result;
   }
 
   @Put('exercises/:exerciseId')
-  updateExercise(
+  async updateExercise(
     @Param('exerciseId') exerciseId: string,
     @Body() updateDto: dto.UpdateExerciseDto,
+    @Req() req: any,
   ) {
-    return this.programsService.updateAssignedExercise(exerciseId, updateDto);
+    const result = await this.programsService.updateAssignedExercise(
+      exerciseId,
+      updateDto,
+    );
+    await Promise.all([
+      result?.program_day_id
+        ? this.cacheManager.del(
+            userCacheKey(
+              req.user.id,
+              `/programs/days/${result.program_day_id}`,
+            ),
+          )
+        : Promise.resolve(),
+      this.invalidateUserCache(req.user.id),
+    ]);
+    return result;
   }
 
   @Delete('exercises/:exerciseId')
-  removeExercise(@Param('exerciseId') exerciseId: string) {
-    return this.programsService.removeExerciseFromDay(exerciseId);
+  async removeExercise(
+    @Param('exerciseId') exerciseId: string,
+    @Req() req: any,
+  ) {
+    const result = await this.programsService.removeExerciseFromDay(exerciseId);
+    await Promise.all([
+      result?.program_day_id
+        ? this.cacheManager.del(
+            userCacheKey(
+              req.user.id,
+              `/programs/days/${result.program_day_id}`,
+            ),
+          )
+        : Promise.resolve(),
+      this.invalidateUserCache(req.user.id),
+    ]);
+    return result;
   }
 
   // ============================================
@@ -223,25 +290,24 @@ export class ProgramsController {
   async completeWorkout(
     @Param('workout_id') workoutId: string,
     @Body() completeDto: dto.CompleteWorkoutDto,
-    @Body() program_day_id: string,
   ) {
     const result = await this.programsService.completeWorkout(
       workoutId,
-      program_day_id,
+      completeDto.program_day_id ?? '',
       completeDto.duration_minutes,
     );
     await this.cacheManager.del(`/programs/workouts/${workoutId}`);
     return result;
   }
 
-  @UseInterceptors(CacheInterceptor)
+  @UseInterceptors(UserScopedCacheInterceptor)
   @CacheTTL(30000)
   @Get('workouts/:workoutId')
   getWorkoutLog(@Param('workoutId') workoutId: string) {
     return this.programsService.getWorkoutLog(workoutId);
   }
 
-  @UseInterceptors(CacheInterceptor)
+  @UseInterceptors(UserScopedCacheInterceptor)
   @CacheTTL(60000)
   @Get('users/:userId/history')
   getWorkoutHistory(
@@ -266,11 +332,23 @@ export class ProgramsController {
       commentDto.author_role,
       commentDto.message,
     );
-    await this.cacheManager.del(`/programs/workouts/${workoutId}/comments`);
+    // Invalidate the comment cache for *all* users who may have it cached.
+    // Because comment lists are per-workout (not per-user), also delete the
+    // user-scoped key belonging to the commenter so they see the update
+    // immediately.
+    await Promise.all([
+      this.cacheManager.del(`/programs/workouts/${workoutId}/comments`),
+      this.cacheManager.del(
+        userCacheKey(
+          commentDto.user_id,
+          `/programs/workouts/${workoutId}/comments`,
+        ),
+      ),
+    ]);
     return result;
   }
 
-  @UseInterceptors(CacheInterceptor)
+  @UseInterceptors(UserScopedCacheInterceptor)
   @CacheTTL(30000)
   @Get('workouts/:workoutId/comments')
   getComments(@Param('workoutId') workoutId: string) {
@@ -281,7 +359,7 @@ export class ProgramsController {
   // ANALYTICS / PROGRESS
   // ============================================
 
-  @UseInterceptors(CacheInterceptor)
+  @UseInterceptors(UserScopedCacheInterceptor)
   @CacheTTL(60000)
   @Get('users/:userId/exercises/:exerciseId/progress')
   getExerciseProgress(
@@ -296,7 +374,7 @@ export class ProgramsController {
     );
   }
 
-  @UseInterceptors(CacheInterceptor)
+  @UseInterceptors(UserScopedCacheInterceptor)
   @CacheTTL(60000)
   @Get('users/:userId/stats')
   getUserStats(@Param('userId') userId: string) {

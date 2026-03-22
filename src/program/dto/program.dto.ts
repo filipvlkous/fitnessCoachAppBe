@@ -290,6 +290,10 @@ export class LogExerciseDto {
 }
 
 export class CompleteWorkoutDto {
+  @IsString()
+  @IsOptional()
+  program_day_id?: string;
+
   @IsNumber()
   @IsOptional()
   duration_minutes?: number;

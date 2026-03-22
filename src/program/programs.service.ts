@@ -450,7 +450,7 @@ export class ProgramsService {
   }
 
   // Add exercise to a day
-  async addExerciseToDay(dto: AddExerciseDto | AddExerciseDto[]) {
+  async addExerciseToDay(dto: AddExerciseDto | AddExerciseDto[], id: string) {
     const items = Array.isArray(dto) ? dto : [dto];
     console.log('Adding exercises to day:', items);
     const sanitized = items.map(
@@ -476,7 +476,8 @@ export class ProgramsService {
     );
     const { error } = await this.supabase
       .from('user_assigned_exercises')
-      .insert(sanitized);
+      .insert(sanitized)
+      .eq('program_day_id', id);
 
     if (error) throw new Error(error.message);
     return true;
@@ -506,58 +507,20 @@ export class ProgramsService {
     return data;
   }
 
-  async upsertAssignedExercises(
-    exercises: Array<Partial<AddExerciseDto> & { id?: string }>,
-  ) {
-    const { data, error } = await this.supabase
-      .from('user_assigned_exercises')
-      .upsert(
-        exercises.map(
-          ({
-            id,
-            program_day_id,
-            exercise_id,
-            planned_sets,
-            planned_reps,
-            planned_weight,
-            rest_seconds,
-            sort_order,
-            notes,
-          }) => ({
-            ...(id !== undefined && { id }),
-            ...(program_day_id !== undefined && { program_day_id }),
-            ...(exercise_id !== undefined && { exercise_id }),
-            ...(planned_sets !== undefined && { planned_sets }),
-            ...(planned_reps !== undefined && { planned_reps }),
-            ...(planned_weight !== undefined && { planned_weight }),
-            ...(rest_seconds !== undefined && { rest_seconds }),
-            ...(sort_order !== undefined && { sort_order }),
-            ...(notes !== undefined && { notes }),
-            updated_at: new Date().toISOString(),
-          }),
-        ),
-        { onConflict: 'id' },
-      )
-      .select(
-        `
-        *,
-        exercises (*)
-      `,
-      );
-
-    if (error) throw new Error(error.message);
-    return data;
-  }
-
   // Remove exercise from a day
   async removeExerciseFromDay(assignedExerciseId: string) {
-    const { error } = await this.supabase
+    const { data, error } = await this.supabase
       .from('user_assigned_exercises')
       .delete()
-      .eq('id', assignedExerciseId);
+      .eq('id', assignedExerciseId)
+      .select('program_day_id')
+      .single();
 
     if (error) throw new Error(error.message);
-    return { message: 'Exercise removed successfully' };
+    return {
+      message: 'Exercise removed successfully',
+      program_day_id: data?.program_day_id,
+    };
   }
 
   async updateAssignedExercises(
@@ -615,19 +578,24 @@ export class ProgramsService {
   async logWorkout(dto: LogWorkoutDto) {
     const workoutDate = new Date(dto.workout_date).toISOString();
 
+    // Return existing log if one already exists for this day + date
+    const { data: existing } = await this.supabase
+      .from('workout_logs')
+      .select('id')
+      .eq('user_workout_program_id', dto.workout_id)
+      .eq('workout_date', workoutDate)
+      .maybeSingle();
+
+    if (existing) return existing; // { id }
+
     const { data, error } = await this.supabase
       .from('workout_logs')
-      .upsert(
-        {
-          program_day_id: dto.program_day_id,
-          user_workout_program_id: dto.workout_id,
-          workout_date: workoutDate,
-          completed: false,
-        },
-        {
-          onConflict: 'program_day_id,workout_date',
-        },
-      )
+      .insert({
+        program_day_id: dto.program_day_id,
+        user_workout_program_id: dto.workout_id,
+        workout_date: workoutDate,
+        completed: false,
+      })
       .select('id')
       .single();
 

@@ -13,7 +13,6 @@ export interface WeekDayStatus {
   day_name: string | null;
 }
 
-
 @Injectable()
 export class WorkoutHistoryService {
   constructor(private readonly supabaseService: SupabaseService) {}
@@ -38,7 +37,12 @@ export class WorkoutHistoryService {
       .order('workout_date', { ascending: true })
       .eq('user_workout_program_id', programDayId);
 
-    return data;
+    if (error) {
+      console.error('Error fetching workout history:', error);
+      return [];
+    } else {
+      return data;
+    }
   }
 
   async getWorkoutStreek(id: string) {
@@ -63,6 +67,11 @@ export class WorkoutHistoryService {
       exercises (
         name,
         muscle_group
+      ),
+      workout_logs (
+        user_program_days (
+          day_name
+        )
       )
     `,
       )
@@ -74,7 +83,14 @@ export class WorkoutHistoryService {
       return null;
     }
 
-    return data;
+    if (!data || data.length === 0) return null;
+
+    const dayName = data[0].workout_logs?.user_program_days?.day_name ?? null;
+
+    return {
+      dayName,
+      logs: data.map(({ workout_logs, ...log }) => log),
+    };
   }
 
   async getWeekStatus(
