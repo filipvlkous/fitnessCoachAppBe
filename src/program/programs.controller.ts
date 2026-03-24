@@ -49,18 +49,34 @@ export class ProgramsController {
       this.cacheManager.del(
         userCacheKey(userId, `/programs/users/${userId}/stats`),
       ),
+      this.cacheManager.del(
+        userCacheKey(userId, `/programs/users/${userId}/history`),
+      ),
+      this.cacheManager.del(userCacheKey(userId, '/workoutHistory/streak')),
     ]);
   }
 
-  // Program-level endpoints (GET /:programId, GET /:programId/progress) are
-  // cached with the plain CacheInterceptor (no user prefix) because their
-  // responses are shared across users.  Invalidation therefore uses the
-  // plain URL key, consistent with what CacheInterceptor stores.
   private async invalidateProgramCache(programId: string) {
     await Promise.all([
       this.cacheManager.del(`/programs/${programId}`),
       this.cacheManager.del(`/programs/${programId}/progress`),
     ]);
+  }
+
+  private async invalidateCoachCache(userId: string, coachId: string) {
+    await Promise.all([
+      this.cacheManager.del(`/programs/coach/${coachId}/programs`),
+      this.cacheManager.del(
+        userCacheKey(coachId, `/programs/coach/${coachId}/programs`),
+      ),
+    ]);
+  }
+
+  private async invalidateDayCache(userId: string, dayId: string) {
+    await this.cacheManager.del(
+      userCacheKey(userId, `/programs/days/${dayId}`),
+    );
+    await this.invalidateUserCache(userId);
   }
 
   @UseInterceptors(CacheInterceptor)
@@ -78,9 +94,7 @@ export class ProgramsController {
   async createProgram(@Body() createDto: dto.CreateUserProgramDto) {
     const result = await this.programsService.createUserProgram(createDto);
     await this.invalidateUserCache(createDto.user_id);
-    await this.cacheManager.del(
-      `/programs/coach/${createDto.coach_id}/programs`,
-    );
+    await this.invalidateCoachCache(createDto.user_id, createDto.coach_id);
     return result;
   }
 
@@ -105,21 +119,21 @@ export class ProgramsController {
   }
 
   @UseInterceptors(UserScopedCacheInterceptor)
-  @CacheTTL(60000)
+  @CacheTTL(60)
   @Get('users/:userId/all')
   getUserPrograms(@Param('userId') userId: string) {
     return this.programsService.getUserPrograms(userId);
   }
 
   @UseInterceptors(UserScopedCacheInterceptor)
-  @CacheTTL(60000)
+  @CacheTTL(60)
   @Get('users/:userId/active')
   getUserActiveProgram(@Param('userId') userId: string) {
     return this.programsService.getUserActiveProgram(userId);
   }
 
   @UseInterceptors(UserScopedCacheInterceptor)
-  @CacheTTL(60000)
+  @CacheTTL(60)
   @Get('exercises/:program_id/active/:dayNumber')
   getUserActiveDay(
     @Param('program_id') program_id: string,
@@ -129,14 +143,14 @@ export class ProgramsController {
   }
 
   @UseInterceptors(UserScopedCacheInterceptor)
-  @CacheTTL(60000)
+  @CacheTTL(60)
   @Get('/users/:user_id/activeWeek')
   getUserActiveWeek(@Param('user_id') user_id: string) {
     return this.programsService.getUserActiveWeek(user_id);
   }
 
   @UseInterceptors(UserScopedCacheInterceptor)
-  @CacheTTL(60000)
+  @CacheTTL(60)
   @Get('coach/:coachId/programs')
   getCoachPrograms(@Param('coachId') coachId: string) {
     return this.programsService.getCoachPrograms(coachId);
@@ -147,19 +161,24 @@ export class ProgramsController {
   // ============================================
 
   @Post('days')
-  createDay(@Body() dayDto: dto.CreateProgramDayDto) {
-    return this.programsService.createProgramDay(dayDto);
+  async createDay(@Body() dayDto: dto.CreateProgramDayDto, @Req() req: any) {
+    const result = await this.programsService.createProgramDay(dayDto);
+    // Assuming the DTO has a program_id, you might want to invalidate that program's cache
+    if (dayDto.program_id) {
+      await this.invalidateProgramCache(dayDto.program_id);
+    }
+    return result;
   }
 
   @UseInterceptors(UserScopedCacheInterceptor)
-  @CacheTTL(60000)
+  @CacheTTL(60)
   @Get('days/:dayId')
   getDay(@Param('dayId') dayId: string) {
     return this.programsService.getProgramDay(dayId);
   }
 
   @UseInterceptors(UserScopedCacheInterceptor)
-  @CacheTTL(60000)
+  @CacheTTL(60)
   @Get(':programId/week/:weekNumber/day/:dayNumber')
   getDayByNumber(
     @Param('programId') programId: string,
@@ -174,16 +193,25 @@ export class ProgramsController {
   }
 
   @Put('days/:dayId')
-  updateDay(
+  async updateDay(
     @Param('dayId') dayId: string,
     @Body() updateDto: dto.UpdateProgramDayDto,
+    @Req() req: any,
   ) {
-    return this.programsService.updateProgramDay(dayId, updateDto);
+    const result = await this.programsService.updateProgramDay(
+      dayId,
+      updateDto,
+    );
+    // Requires athlete's user ID if coach is making the change
+    await this.invalidateDayCache(req.user.id, dayId);
+    return result;
   }
 
   @Delete('days/:dayId')
-  deleteDay(@Param('dayId') dayId: string) {
-    return this.programsService.deleteProgramDay(dayId);
+  async deleteDay(@Param('dayId') dayId: string, @Req() req: any) {
+    const result = await this.programsService.deleteProgramDay(dayId);
+    await this.invalidateDayCache(req.user.id, dayId);
+    return result;
   }
 
   // ============================================
@@ -200,12 +228,7 @@ export class ProgramsController {
       body.exercises,
       dayId,
     );
-    await Promise.all([
-      this.cacheManager.del(
-        userCacheKey(req.user.id, `/programs/days/${dayId}`),
-      ),
-      this.invalidateUserCache(req.user.id),
-    ]);
+    await this.invalidateDayCache(req.user.id, dayId); // Better invalidation scope
     return result;
   }
 
@@ -219,12 +242,7 @@ export class ProgramsController {
       dayId,
       updateDto.exercises,
     );
-    await Promise.all([
-      this.cacheManager.del(
-        userCacheKey(req.user.id, `/programs/days/${dayId}`),
-      ),
-      this.invalidateUserCache(req.user.id),
-    ]);
+    await this.invalidateDayCache(req.user.id, dayId); // Better invalidation scope
     return result;
   }
 
@@ -238,17 +256,10 @@ export class ProgramsController {
       exerciseId,
       updateDto,
     );
-    await Promise.all([
-      result?.program_day_id
-        ? this.cacheManager.del(
-            userCacheKey(
-              req.user.id,
-              `/programs/days/${result.program_day_id}`,
-            ),
-          )
-        : Promise.resolve(),
-      this.invalidateUserCache(req.user.id),
-    ]);
+
+    if (result?.program_day_id) {
+      await this.invalidateDayCache(req.user.id, result.program_day_id);
+    }
     return result;
   }
 
@@ -258,17 +269,9 @@ export class ProgramsController {
     @Req() req: any,
   ) {
     const result = await this.programsService.removeExerciseFromDay(exerciseId);
-    await Promise.all([
-      result?.program_day_id
-        ? this.cacheManager.del(
-            userCacheKey(
-              req.user.id,
-              `/programs/days/${result.program_day_id}`,
-            ),
-          )
-        : Promise.resolve(),
-      this.invalidateUserCache(req.user.id),
-    ]);
+    if (result?.program_day_id) {
+      await this.invalidateDayCache(req.user.id, result.program_day_id);
+    }
     return result;
   }
 
@@ -277,8 +280,10 @@ export class ProgramsController {
   // ============================================
 
   @Post('workouts')
-  logWorkout(@Body() logDto: dto.LogWorkoutDto) {
-    return this.programsService.logWorkout(logDto);
+  async logWorkout(@Body() logDto: dto.LogWorkoutDto, @Req() req: any) {
+    const result = await this.programsService.logWorkout(logDto);
+    await this.invalidateUserCache(req.user.id); // Triggers stats/history refresh
+    return result;
   }
 
   @Post('workouts/logWorkoutSets')
@@ -290,13 +295,20 @@ export class ProgramsController {
   async completeWorkout(
     @Param('workout_id') workoutId: string,
     @Body() completeDto: dto.CompleteWorkoutDto,
+    @Req() req: any,
   ) {
     const result = await this.programsService.completeWorkout(
       workoutId,
       completeDto.program_day_id ?? '',
       completeDto.duration_minutes,
     );
-    await this.cacheManager.del(`/programs/workouts/${workoutId}`);
+
+    await Promise.all([
+      this.cacheManager.del(
+        userCacheKey(req.user.id, `/programs/workouts/${workoutId}`),
+      ),
+      this.invalidateUserCache(req.user.id), // Needed for stats, history, and active status updates
+    ]);
     return result;
   }
 
@@ -325,26 +337,31 @@ export class ProgramsController {
   async addComment(
     @Param('workoutId') workoutId: string,
     @Body() commentDto: dto.AddCommentDto,
+    @Req() req: any,
   ) {
     const result = await this.programsService.addWorkoutComment(
       workoutId,
-      commentDto.user_id,
+      commentDto.user_id, // Highly recommend using this userId for invalidation if the coach is commenting
       commentDto.author_role,
       commentDto.message,
     );
-    // Invalidate the comment cache for *all* users who may have it cached.
-    // Because comment lists are per-workout (not per-user), also delete the
-    // user-scoped key belonging to the commenter so they see the update
-    // immediately.
-    await Promise.all([
-      this.cacheManager.del(`/programs/workouts/${workoutId}/comments`),
-      this.cacheManager.del(
+
+    // Invalidates for the person making the request.
+    // If a coach comments, the athlete won't see it until TTL expires unless you also invalidate the athlete's cache key!
+    await this.cacheManager.del(
+      userCacheKey(req.user.id, `/programs/workouts/${workoutId}/comments`),
+    );
+
+    // Safest bet if commentDto.user_id is the athlete:
+    if (commentDto.user_id && commentDto.user_id !== req.user.id) {
+      await this.cacheManager.del(
         userCacheKey(
           commentDto.user_id,
           `/programs/workouts/${workoutId}/comments`,
         ),
-      ),
-    ]);
+      );
+    }
+
     return result;
   }
 
@@ -396,13 +413,17 @@ export class ProgramsController {
   }
 
   @Post(':user_program_day_id/update-name')
-  completeProgram(
+  async completeProgram(
     @Param('user_program_day_id') user_program_day_id: string,
     @Body() body: { day_name: string },
+    @Req() req: any,
   ) {
-    return this.programsService.updateProgramDayName(
+    const result = await this.programsService.updateProgramDayName(
       user_program_day_id,
       body.day_name,
     );
+    // Added day cache invalidation
+    await this.invalidateDayCache(req.user.id, user_program_day_id);
+    return result;
   }
 }

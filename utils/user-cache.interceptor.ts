@@ -18,7 +18,12 @@ export class UserScopedCacheInterceptor extends CacheInterceptor {
   trackBy(context: ExecutionContext): string {
     const req = context.switchToHttp().getRequest();
     const userId = req.user?.id ?? 'anon';
-    const url: string = req.url; // e.g. /workoutHistory?date=2026-03&user_workout_program_id=abc
+    
+    // Use originalUrl so that query params are part of the cache key.
+    // Without this, all requests to the same path (e.g. different months or
+    // weeks) share one cache entry and serve stale data.
+    const url: string = req.originalUrl;
+
     return `user:${userId}:${url}`;
   }
 }

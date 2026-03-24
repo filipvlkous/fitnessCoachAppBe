@@ -83,8 +83,11 @@ export class ExercisesController {
   @UseInterceptors(UserScopedCacheInterceptor)
   @CacheTTL(300000)
   @Get(':id/media')
-  getMedia(@Param('id') id: string) {
-    return this.exercisesService.getMedia(id);
+  getMedia(
+    @Param('id') id: string,
+    @Query('type') type: 'image' | 'video' | 'both' = 'both',
+  ) {
+    return this.exercisesService.getMedia(id, type);
   }
 
   @Delete(':id/media')

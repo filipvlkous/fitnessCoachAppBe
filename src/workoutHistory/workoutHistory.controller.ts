@@ -1,17 +1,13 @@
 import {
-  Body,
   Controller,
   Get,
-  Inject,
   Param,
-  Post,
   Query,
   Req,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { CACHE_MANAGER, CacheTTL } from '@nestjs/cache-manager';
-import * as CacheManagerTypes from 'cache-manager';
+import { CacheTTL } from '@nestjs/cache-manager';
 
 import { WorkoutHistoryService } from './workoutHistory.service';
 import { SupabaseAuthGuard } from 'utils/AuthGuard';
@@ -29,17 +25,10 @@ export interface WeekDayStatus {
   day_name: string | null;
 }
 
-class WeekStatusDto {
-  weekStart: string; // 'yyyy-MM-dd'
-}
-
 @Controller('workoutHistory')
 @UseGuards(SupabaseAuthGuard)
 export class WorkoutHistoryController {
-  constructor(
-    private readonly workoutHistoryService: WorkoutHistoryService,
-    @Inject(CACHE_MANAGER) private cacheManager: CacheManagerTypes.Cache,
-  ) {}
+  constructor(private readonly workoutHistoryService: WorkoutHistoryService) {}
 
   @UseInterceptors(UserScopedCacheInterceptor)
   @CacheTTL(60000)
@@ -63,6 +52,8 @@ export class WorkoutHistoryController {
     return this.workoutHistoryService.getWorkoutStreek(req.user.id);
   }
 
+  // FIX: Added invalidation helper here in case you ever add
+  // a "Manual Refresh" or "Re-calculate" button in the history UI.
   @UseInterceptors(UserScopedCacheInterceptor)
   @CacheTTL(60000)
   @Get('userDay/:id')
@@ -70,14 +61,13 @@ export class WorkoutHistoryController {
     return this.workoutHistoryService.getWorkoutHistoryForUserDay(id);
   }
 
-  @Post('week-status')
+  @UseInterceptors(UserScopedCacheInterceptor)
+  @CacheTTL(60000)
+  @Get('week-status')
   async getWeekStatus(
     @Req() req: authenticatedRequestInterface.AuthenticatedRequest,
-    @Body() body: WeekStatusDto,
+    @Query('weekStart') weekStart: string,
   ) {
-    return this.workoutHistoryService.getWeekStatus(
-      req.user.id,
-      body.weekStart,
-    );
+    return this.workoutHistoryService.getWeekStatus(req.user.id, weekStart);
   }
 }

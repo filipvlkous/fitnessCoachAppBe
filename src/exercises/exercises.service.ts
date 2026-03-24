@@ -130,10 +130,19 @@ export class ExercisesService {
     return { message: 'Exercise deleted successfully' };
   }
 
-  async getMedia(exerciseId: string) {
+  async getMedia(
+    exerciseId: string,
+    type: 'image' | 'video' | 'both' = 'both',
+  ) {
     const { data, error } = await this.supabase
       .from('exercises')
-      .select('img_url, video_url')
+      .select(
+        type === 'both'
+          ? 'img_url, video_url'
+          : type === 'image'
+            ? 'img_url'
+            : 'video_url',
+      )
       .eq('id', exerciseId)
       .single();
 
