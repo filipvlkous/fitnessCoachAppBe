@@ -54,15 +54,13 @@ export class ExercisesService {
 
   // Update exercise
   async update(id: string, dto: UpdateExerciseDto) {
-    const { data, error } = await this.supabase
+    const { error } = await this.supabase
       .from('exercises')
       .update(dto)
-      .eq('id', id)
-      .select()
-      .single();
+      .eq('id', id);
+
 
     if (error) throw new Error(error.message);
-    return data;
   }
 
   private parseStorageLocation(
@@ -153,7 +151,7 @@ export class ExercisesService {
   private async compressImage(imageBuffer: Buffer): Promise<Buffer> {
     try {
       return await sharp(imageBuffer)
-        .resize(1920, 1080, {
+        .resize(1280, 720, {
           fit: 'inside',
           withoutEnlargement: true,
         })
@@ -196,8 +194,8 @@ export class ExercisesService {
         const imagePath = `image-${Date.now()}.webp`;
         const { error: imageError } = await this.supabase.storage
           .from('images')
-          .upload(imagePath, imageFile.file, {
-            cacheControl: '3600',
+          .upload(imagePath, compressedImageBuffer, {
+            cacheControl: '31536000',
             upsert: false,
             contentType: 'image/webp',
           });
@@ -214,26 +212,34 @@ export class ExercisesService {
       }
 
       // Upload video if provided
-      if (videoFile) {
-        const compressedVideoBuffer = await this.compressVideo(videoFile.file);
-        const videoPath = `video-${Date.now()}-${videoFile.filename}`;
-        const { data: videoData, error: videoError } =
-          await this.supabase.storage
-            .from('videos')
-            .upload(videoPath, videoFile.file, {
-              cacheControl: '3600',
-              upsert: false,
-            });
+     if (videoFile) {
+       // 1. Move compression to a background worker if possible,
+       // but at least ensure we use a stream or optimized buffer.
+       const compressedVideoBuffer = await this.compressVideo(videoFile.file);
 
-        if (videoError)
-          throw new Error(`Video upload failed: ${videoError.message}`);
+       // 2. Better Naming: Use a folder structure for organization
+       const videoPath = `exercises/${Date.now()}-${videoFile.filename}`;
 
-        const { data: videoUrl } = this.supabase.storage
-          .from('videos')
-          .getPublicUrl(videoPath);
+       const { data: videoData, error: videoError } =
+         await this.supabase.storage
+           .from('videos')
+           .upload(videoPath, compressedVideoBuffer, {
+             // 3. MAXIMIZE CACHED EGRESS (1 Year)
+             cacheControl: '31536000',
+             // 4. HELP THE PLAYER
+             contentType: 'video/mp4',
+             upsert: false,
+           });
 
-        urls.video_url = videoUrl.publicUrl;
-      }
+       if (videoError)
+         throw new Error(`Video upload failed: ${videoError.message}`);
+
+       const { data: videoUrl } = this.supabase.storage
+         .from('videos')
+         .getPublicUrl(videoPath);
+
+       urls.video_url = videoUrl.publicUrl;
+     }
 
       // Update exercise record with media URLs
       if (Object.keys(urls).length > 0) {

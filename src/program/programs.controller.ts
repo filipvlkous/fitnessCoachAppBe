@@ -64,12 +64,9 @@ export class ProgramsController {
   }
 
   private async invalidateCoachCache(userId: string, coachId: string) {
-    await Promise.all([
-      this.cacheManager.del(`/programs/coach/${coachId}/programs`),
-      this.cacheManager.del(
-        userCacheKey(coachId, `/programs/coach/${coachId}/programs`),
-      ),
-    ]);
+    await this.cacheManager.del(
+      userCacheKey(coachId, `/programs/coach/${coachId}/programs`),
+    );
   }
 
   private async invalidateDayCache(userId: string, dayId: string) {
@@ -103,11 +100,28 @@ export class ProgramsController {
     @Param('programId') programId: string,
     @Body() updateDto: dto.UpdateProgramDto,
   ) {
+
+    console.log(
+      'Updating program with ID:',
+      programId,
+      'with data:',
+      updateDto,
+    );
     const result = await this.programsService.updateProgram(
       programId,
       updateDto,
     );
-    await this.invalidateProgramCache(programId);
+
+    
+    // Repopulate the shared program cache with fresh data
+    await this.cacheManager.set(`/programs/${programId}`, result, 300000);
+    // Also invalidate user- and coach-scoped caches so they reflect the update
+    if (result?.user_id) {
+      await this.invalidateUserCache(result.user_id);
+    }
+    if (result?.coach_id) {
+      await this.invalidateCoachCache(result.user_id, result.coach_id);
+    }
     return result;
   }
 

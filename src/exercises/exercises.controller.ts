@@ -65,10 +65,11 @@ export class ExercisesController {
 
   @Put(':id')
   async update(@Param('id') id: string, @Body() dto: UpdateExerciseDto) {
-    const result = await this.exercisesService.update(id, dto);
+    await this.exercisesService.update(id, dto);
+
+    // Delete both possible key patterns to be safe
     await this.cacheManager.del(`/exercises/${id}`);
-    await this.cacheManager.del(`/exercises/${id}/media`);
-    return result;
+    await this.cacheManager.del('/exercises');
   }
 
   @Delete(':id')
