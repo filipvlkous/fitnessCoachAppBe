@@ -136,9 +136,10 @@ export class WorkoutHistoryService {
       ).size;
 
       let status: WorkoutDayStatus = 'empty';
-      if (total === 0) status = 'rest';
-      else if (logged >= total) status = 'done';
-      else if (logged > 0) status = 'partial';
+   
+       if (log.completed) status = 'done';
+       else if (!log.completed && logged > 0) status = 'partial';
+       else if (total === 0) status = 'rest';
 
       return {
         date: log.workout_date,
