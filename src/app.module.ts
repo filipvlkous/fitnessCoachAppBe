@@ -9,6 +9,7 @@ import { UserModule } from './user/user.module';
 import { ExercisesModule } from './exercises/exercises.module';
 import { ProgramsModule } from './program/programs.module';
 import { WorkoutHistoryModule } from './workoutHistory/workoutHistory.module';
+import { FeedModule } from './feed/feed.module';
 
 @Module({
   imports: [
@@ -29,13 +30,14 @@ import { WorkoutHistoryModule } from './workoutHistory/workoutHistory.module';
         };
       },
     }),
-    
+
     SupabaseModule,
     ImageAnalysisModule,
     UserModule,
     ExercisesModule,
     ProgramsModule,
     WorkoutHistoryModule,
+    FeedModule,
   ],
   controllers: [AppController],
   providers: [AppService],
