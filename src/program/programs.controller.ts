@@ -311,9 +311,11 @@ export class ProgramsController {
     @Body() completeDto: dto.CompleteWorkoutDto,
     @Req() req: any,
   ) {
+
     const result = await this.programsService.completeWorkout(
       workoutId,
       completeDto.program_day_id ?? '',
+      req.user.id,
       completeDto.duration_minutes,
     );
 

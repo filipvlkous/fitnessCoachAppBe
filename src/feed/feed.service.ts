@@ -1,7 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { parseStringPromise } from 'xml2js';
 
-interface FeedCache {
+export interface FeedCache {
   byCategory: Record<string, object[]>;
   byManufacturer: Record<string, object[]>;
 }
@@ -9,11 +10,20 @@ interface FeedCache {
 let feedCache: FeedCache | null = null;
 
 @Injectable()
-export class FeedService {
-  private async getCache(): Promise<FeedCache> {
-    if (feedCache) return feedCache;
+export class FeedService implements OnModuleInit {
+  async onModuleInit() {
+    await this.getCache();
+  }
+  getLocalCache() {
+    return feedCache;
+  }
 
-    const url = 'https://feeds.mergado.com/dafit-cz-heureka-cz-produktovy-cz-1-a26875ee3aafd1f76ad99b7b03edb268.xml';
+  @Cron('0 5 * * *')
+  async getCache(): Promise<FeedCache> {
+    feedCache = null;
+
+    const url =
+      'https://feeds.mergado.com/dafit-cz-heureka-cz-produktovy-cz-1-a26875ee3aafd1f76ad99b7b03edb268.xml';
 
     const response = await fetch(url);
     const data = await response.text();
@@ -58,30 +68,51 @@ export class FeedService {
   }
 
   async getAllByCategory() {
-    const cache = await this.getCache();
+    let cache;
+    if (this.getLocalCache() === null) {
+      cache = await this.getCache();
+    } else {
+      cache = this.getLocalCache();
+    }
     return cache.byCategory;
   }
 
   async getByCategory(category: string) {
-    const cache = await this.getCache();
+    let cache;
+    if (this.getLocalCache() === null) {
+      cache = await this.getCache();
+    } else {
+      cache = this.getLocalCache();
+    }
     const key = Object.keys(cache.byCategory).find(
-      k => k.toLowerCase() === category.toLowerCase(),
+      (k) => k.toLowerCase() === category.toLowerCase(),
     );
     if (!key) throw new NotFoundException(`Category '${category}' not found`);
     return cache.byCategory[key];
   }
 
   async getAllByManufacturer() {
-    const cache = await this.getCache();
+    let cache;
+    if (this.getLocalCache() === null) {
+      cache = await this.getCache();
+    } else {
+      cache = this.getLocalCache();
+    }
     return cache.byManufacturer;
   }
 
   async getByManufacturer(manufacturer: string) {
-    const cache = await this.getCache();
+    let cache;
+    if (this.getLocalCache() === null) {
+      cache = await this.getCache();
+    } else {
+      cache = this.getLocalCache();
+    }
     const key = Object.keys(cache.byManufacturer).find(
-      k => k.toLowerCase() === manufacturer.toLowerCase(),
+      (k) => k.toLowerCase() === manufacturer.toLowerCase(),
     );
-    if (!key) throw new NotFoundException(`Manufacturer '${manufacturer}' not found`);
+    if (!key)
+      throw new NotFoundException(`Manufacturer '${manufacturer}' not found`);
     return cache.byManufacturer[key];
   }
 }

@@ -4,11 +4,11 @@ import { IsNotEmpty, IsString } from 'class-validator';
 export class CreateExerciseDto {
   @IsNotEmpty()
   @IsString()
-  name: string;
+  name!: string;
 
   @IsNotEmpty()
   @IsString()
-  muscle_group: string;
+  muscle_group!: string;
 
   @IsString()
   description?: string;

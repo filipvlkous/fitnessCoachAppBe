@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { CacheModule } from '@nestjs/cache-manager';
+import { ScheduleModule } from '@nestjs/schedule';
 import { redisStore } from 'cache-manager-redis-yet';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -10,6 +11,8 @@ import { ExercisesModule } from './exercises/exercises.module';
 import { ProgramsModule } from './program/programs.module';
 import { WorkoutHistoryModule } from './workoutHistory/workoutHistory.module';
 import { FeedModule } from './feed/feed.module';
+import { SupplementsModule } from './supplements/supplements.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 @Module({
   imports: [
@@ -31,6 +34,7 @@ import { FeedModule } from './feed/feed.module';
       },
     }),
 
+    ScheduleModule.forRoot(),
     SupabaseModule,
     ImageAnalysisModule,
     UserModule,
@@ -38,6 +42,8 @@ import { FeedModule } from './feed/feed.module';
     ProgramsModule,
     WorkoutHistoryModule,
     FeedModule,
+    SupplementsModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

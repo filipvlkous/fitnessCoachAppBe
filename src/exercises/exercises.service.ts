@@ -157,7 +157,7 @@ export class ExercisesService {
         })
         .webp({ quality: 80 })
         .toBuffer();
-    } catch (error) {
+    } catch (error: any) {
       console.warn(
         'Image compression failed, uploading original:',
         error.message,
@@ -212,34 +212,34 @@ export class ExercisesService {
       }
 
       // Upload video if provided
-     if (videoFile) {
-       // 1. Move compression to a background worker if possible,
-       // but at least ensure we use a stream or optimized buffer.
-       const compressedVideoBuffer = await this.compressVideo(videoFile.file);
+      if (videoFile) {
+        // 1. Move compression to a background worker if possible,
+        // but at least ensure we use a stream or optimized buffer.
+        const compressedVideoBuffer = await this.compressVideo(videoFile.file);
 
-       // 2. Better Naming: Use a folder structure for organization
-       const videoPath = `exercises/${Date.now()}-${videoFile.filename}`;
+        // 2. Better Naming: Use a folder structure for organization
+        const videoPath = `exercises/${Date.now()}-${videoFile.filename}`;
 
-       const { data: videoData, error: videoError } =
-         await this.supabase.storage
-           .from('videos')
-           .upload(videoPath, compressedVideoBuffer, {
-             // 3. MAXIMIZE CACHED EGRESS (1 Year)
-             cacheControl: '31536000',
-             // 4. HELP THE PLAYER
-             contentType: 'video/mp4',
-             upsert: false,
-           });
+        const { data: videoData, error: videoError } =
+          await this.supabase.storage
+            .from('videos')
+            .upload(videoPath, compressedVideoBuffer, {
+              // 3. MAXIMIZE CACHED EGRESS (1 Year)
+              cacheControl: '31536000',
+              // 4. HELP THE PLAYER
+              contentType: 'video/mp4',
+              upsert: false,
+            });
 
-       if (videoError)
-         throw new Error(`Video upload failed: ${videoError.message}`);
+        if (videoError)
+          throw new Error(`Video upload failed: ${videoError.message}`);
 
-       const { data: videoUrl } = this.supabase.storage
-         .from('videos')
-         .getPublicUrl(videoPath);
+        const { data: videoUrl } = this.supabase.storage
+          .from('videos')
+          .getPublicUrl(videoPath);
 
-       urls.video_url = videoUrl.publicUrl;
-     }
+        urls.video_url = videoUrl.publicUrl;
+      }
 
       // Update exercise record with media URLs
       if (Object.keys(urls).length > 0) {
@@ -253,7 +253,7 @@ export class ExercisesService {
       }
 
       return urls;
-    } catch (error) {
+    } catch (error: any) {
       throw new Error(`Media upload error: ${error.message}`);
     }
   }

@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+import { NotificationsService } from 'src/notifications/notifications.service';
 
 // ============================================
 // DTOs & Types
@@ -97,7 +98,10 @@ interface LogExerciseDto {
 
 @Injectable()
 export class ProgramsService {
-  constructor(private supabaseService: SupabaseService) {}
+  constructor(
+    private supabaseService: SupabaseService,
+    private notificationsService: NotificationsService,
+  ) {}
 
   private get supabase() {
     return this.supabaseService.getClient();
@@ -155,7 +159,7 @@ export class ProgramsService {
       }
 
       return this.getUserProgram(program.id);
-    } catch (err) {
+    } catch (err: any) {
       // Rollback
       await this.supabase
         .from('user_workout_programs')
@@ -632,6 +636,7 @@ export class ProgramsService {
   async completeWorkout(
     workoutLogId: string,
     program_day_id: string,
+    userId: string,
     durationMinutes?: number,
   ) {
     const { data, error } = await this.supabase
@@ -643,6 +648,28 @@ export class ProgramsService {
       .eq('id', workoutLogId)
       .select()
       .single();
+
+    const { data: relation, error: relationError } = await this.supabase
+      .from('coach_user_relations')
+      .select('coach_id')
+      .eq('user_id', userId)
+      .single();
+
+    if (relationError || !relation) {
+      console.error('No coach found for user:', relationError);
+      return;
+    }
+
+    if (relation.coach_id) {
+      this.notificationsService.sendToUser(relation.coach_id, {
+        title: 'Workout Completed!',
+        body: `Great job on completing your workout! You can review your performance and keep up the good work!`,
+        data: {
+          type: 'workout_completed',
+          userId,
+        },
+      });
+    }
 
     if (error) throw new Error(error.message);
     return data;
