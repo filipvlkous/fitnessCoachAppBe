@@ -89,7 +89,7 @@ interface LogExerciseDto {
   assigned_exercise_id: string;
   exercises_id: string;
   sets: Array<{
-    weight: number;
+    weight: number | null;
     reps: number;
     set_number: number;
     note?: string;
@@ -891,5 +891,32 @@ export class ProgramsService {
       completed_workouts: completedWorkouts,
       last_workout_date: workouts?.[0]?.workout_date || null,
     };
+  }
+
+  async logCardio(dto: {
+    workout_log_id: string;
+    cardio_type: string;
+    duration_minutes: number;
+    distance_km?: number | null;
+    intensity?: string | null;
+  }) {
+    const { error, data } = await this.supabaseService.supabase
+      .from('cardio_logs')
+      .insert({
+        workout_log_id: dto.workout_log_id,
+        cardio_type: dto.cardio_type,
+        duration_minutes: dto.duration_minutes,
+        distance_km: dto.distance_km ?? null,
+        intensity: dto.intensity ?? null,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error logging cardio:', error);
+      return null;
+    }
+
+    return data;
   }
 }

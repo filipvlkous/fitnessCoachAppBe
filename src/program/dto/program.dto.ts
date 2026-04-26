@@ -248,8 +248,9 @@ export class LogWorkoutDto {
 }
 
 export class ExerciseSetDto {
+  @IsOptional()
   @IsNumber()
-  weight: number;
+  weight: number | null;
 
   @IsNumber()
   @Min(1)
@@ -297,6 +298,26 @@ export class CompleteWorkoutDto {
   @IsNumber()
   @IsOptional()
   duration_minutes?: number;
+}
+
+export class LogCardioDto {
+  @IsString()
+  workout_log_id: string;
+
+  @IsString()
+  cardio_type: string;
+
+  @IsNumber()
+  @Min(1)
+  duration_minutes: number;
+
+  @IsNumber()
+  @IsOptional()
+  distance_km?: number | null;
+
+  @IsString()
+  @IsOptional()
+  intensity?: string | null;
 }
 
 // ============================================

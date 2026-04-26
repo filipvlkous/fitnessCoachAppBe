@@ -34,6 +34,7 @@ export class FeedService implements OnModuleInit {
     });
 
     const rawItems = result.SHOP.SHOPITEM;
+    if (!rawItems) return { byCategory: {}, byManufacturer: {} };
     const shopItems = Array.isArray(rawItems) ? rawItems : [rawItems];
 
     const byCategory: Record<string, object[]> = {};

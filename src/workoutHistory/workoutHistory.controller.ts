@@ -63,6 +63,13 @@ export class WorkoutHistoryController {
 
   @UseInterceptors(UserScopedCacheInterceptor)
   @CacheTTL(60000)
+  @Get('userDay/:id/short')
+  async getWorkoutHistoryForUserDayShort(@Param('id') id: string) {
+    return this.workoutHistoryService.getWorkoutHistoryForUserDayShort(id);
+  }
+
+  @UseInterceptors(UserScopedCacheInterceptor)
+  @CacheTTL(60000)
   @Get('week-status')
   async getWeekStatus(
     @Req() req: authenticatedRequestInterface.AuthenticatedRequest,

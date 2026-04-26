@@ -59,39 +59,90 @@ export class WorkoutHistoryService {
   }
 
   async getWorkoutHistoryForUserDay(id: string) {
-    const { data, error } = await this.supabaseService.supabase
-      .from('exercise_logs')
-      .select(
-        `
-      *,
-      exercises (
-        name,
-        muscle_group
-      ),
-      workout_logs (
-        user_program_days (
-          day_name
+    const [
+      { data: exerciseData, error: exerciseError },
+      { data: cardioData, error: cardioError },
+    ] = await Promise.all([
+      this.supabaseService.supabase
+        .from('exercise_logs')
+        .select(
+          `
+          *,
+          exercises (
+            name,
+            muscle_group
+          ),
+          workout_logs (
+            user_program_days (
+              day_name
+            )
+          )
+        `,
         )
-      )
-    `,
-      )
-      .eq('workout_log_id', id)
-      .order('created_at', { ascending: true });
+        .eq('workout_log_id', id)
+        .order('created_at', { ascending: true }),
 
-    if (error) {
-      console.error('Error fetching logs:', error);
+      this.supabaseService.supabase
+        .from('cardio_logs')
+        .select('*')
+        .eq('workout_log_id', id)
+        .order('created_at', { ascending: true }),
+    ]);
+
+    if (exerciseError) {
+      console.error('Error fetching exercise logs:', exerciseError);
       return null;
     }
 
-    if (!data || data.length === 0) return null;
+    if (cardioError) {
+      console.error('Error fetching cardio logs:', cardioError);
+      return null;
+    }
 
-    const dayName = data[0].workout_logs?.user_program_days?.day_name ?? null;
+    const dayName =
+      exerciseData?.[0]?.workout_logs?.user_program_days?.day_name ?? null;
 
     return {
       dayName,
-      logs: data.map(({ workout_logs, ...log }) => log),
+      logs: (exerciseData ?? []).map(({ workout_logs, ...log }) => log),
+      cardioLogs: cardioData ?? [],
     };
   }
+
+async getWorkoutHistoryForUserDayShort(id: string) {
+  console.log(id)
+  const [{ data: workoutLog, error: workoutError }, { data: exerciseLogs }, { count: cardioCount }] =
+    await Promise.all([
+      this.supabaseService.supabase
+        .from('workout_logs')
+        .select('user_program_days ( day_name )')
+        .eq('id', id)
+        .single(),
+
+      this.supabaseService.supabase
+        .from('exercise_logs')
+        .select('exercises_id')
+        .eq('workout_log_id', id),
+
+      this.supabaseService.supabase
+        .from('cardio_logs')
+        .select('id', { count: 'exact', head: true })
+        .eq('workout_log_id', id),
+    ]);
+
+  if (workoutError) return null;
+
+  const exerciseCount = new Set((exerciseLogs ?? []).map((e: any) => e.exercises_id)).size;
+  const programDay = Array.isArray(workoutLog?.user_program_days)
+    ? workoutLog.user_program_days[0]
+    : workoutLog?.user_program_days;
+
+  return {
+    dayName: programDay?.day_name ?? null,
+    exerciseCount: exerciseCount ?? 0,
+    cardioCount: cardioCount ?? 0,
+  };
+}
 
   async getWeekStatus(
     userId: string,
@@ -136,10 +187,10 @@ export class WorkoutHistoryService {
       ).size;
 
       let status: WorkoutDayStatus = 'empty';
-   
-       if (log.completed) status = 'done';
-       else if (!log.completed && logged > 0) status = 'partial';
-       else if (total === 0) status = 'rest';
+
+      if (log.completed) status = 'done';
+      else if (!log.completed && logged > 0) status = 'partial';
+      else if (total === 0) status = 'rest';
 
       return {
         date: log.workout_date,

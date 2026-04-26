@@ -100,7 +100,6 @@ export class ProgramsController {
     @Param('programId') programId: string,
     @Body() updateDto: dto.UpdateProgramDto,
   ) {
-
     console.log(
       'Updating program with ID:',
       programId,
@@ -112,7 +111,6 @@ export class ProgramsController {
       updateDto,
     );
 
-    
     // Repopulate the shared program cache with fresh data
     await this.cacheManager.set(`/programs/${programId}`, result, 300000);
     // Also invalidate user- and coach-scoped caches so they reflect the update
@@ -305,13 +303,18 @@ export class ProgramsController {
     return this.programsService.logExerciseSets(exerciseDto);
   }
 
+  @Post('workouts/logCardio')
+  logCardio(@Body() cardioDto: dto.LogCardioDto) {
+    console.log('Received cardio log:', cardioDto);
+    return this.programsService.logCardio(cardioDto);
+  }
+
   @Put('workouts/:workout_id/complete')
   async completeWorkout(
     @Param('workout_id') workoutId: string,
     @Body() completeDto: dto.CompleteWorkoutDto,
     @Req() req: any,
   ) {
-
     const result = await this.programsService.completeWorkout(
       workoutId,
       completeDto.program_day_id ?? '',
