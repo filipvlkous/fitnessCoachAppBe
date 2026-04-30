@@ -86,19 +86,16 @@ export class UserService {
 
   async getDailyMeals(userId: string) {
     try {
-      const { data: daily_entries, error: userError } =
-        await this.supabaseService.supabase
-          .from('daily_entries')
-          .select('id')
-          .eq('user_id', userId)
-          .eq('date', localDateStr(new Date()))
-          .single();
+      const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
 
       const { data, error } = await this.supabaseService.supabase
         .from('meals')
         .select('*')
-        .eq('daily_id', daily_entries?.id); // ← make sure we only look at this user’s row
+        .eq('user_id', userId)
+        .gte('meal_time', `${today} 00:00:00+00`)
+        .lt('meal_time', `${today} 23:59:59+00`);
 
+      console.log('Daily meals data:', data);
       if (error) {
         if (error.code === 'PGRST116') {
           // PGRST116 is the “no rows” error code when you use .single()
@@ -108,7 +105,42 @@ export class UserService {
       }
 
       return data;
-    } catch (error) {}
+    } catch (error: any) {
+      throw new Error(`Error fetching daily meals: ${error.message}`);
+    }
+  }
+
+  async getDailyMacros(userId: string) {
+    try {
+      // Use Prague timezone for 'today'
+      const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Prague' });
+
+      console.log(today)
+      const { data, error } = await this.supabaseService.supabase
+        .from('meals')
+        .select('total_calories, total_carbs, total_fat, total_protein')
+        .eq('user_id', userId)
+        .gte('meal_time', `${today} 00:00:00+00`)
+        .lt('meal_time', `${today} 23:59:59+00`);
+
+      if (error) {
+        throw new Error(`Error fetching daily macros: ${error.message}`);
+      }
+
+      const totals = (data || []).reduce(
+        (acc, meal) => ({
+          total_calories: acc.total_calories + (meal.total_calories || 0),
+          total_carbs: acc.total_carbs + (meal.total_carbs || 0),
+          total_fat: acc.total_fat + (meal.total_fat || 0),
+          total_protein: acc.total_protein + (meal.total_protein || 0),
+        }),
+        { total_calories: 0, total_carbs: 0, total_fat: 0, total_protein: 0 },
+      );
+
+      return totals;
+    } catch (error: any) {
+      throw new Error(`Error fetching daily macros: ${error.message}`);
+    }
   }
 
   async updateUserFitnessMacros(userId: string, fitnessMacros: any) {

@@ -14,6 +14,9 @@ export class ImageAnalysisService {
 
   async analyzeImage(base64: string): Promise<any> {
     try {
+      // Strip data URL prefix if present (e.g. "data:image/jpeg;base64,...")
+      const rawBase64 = base64.includes(',') ? base64.split(',')[1] : base64;
+
       const generationConfig = {
         temperature: 0,
         responseMimeType: 'application/json',
@@ -124,14 +127,14 @@ Based on the provided image, perform the following analyses:
         imageAnalysisPrompt,
         {
           inlineData: {
-            data: base64,
+            data: rawBase64,
             mimeType: 'image/jpeg',
           },
         },
       ];
 
       const response = await this.genAI.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3-flash-preview',
         contents: contents,
         config: generationConfig,
       });
@@ -139,7 +142,7 @@ Based on the provided image, perform the following analyses:
       if (!response || !response.text) return;
 
       return response.text;
-    } catch (error) {
+    } catch (error: any) {
       throw new Error(`Error analyzing image: ${error.message}`);
     }
   }
@@ -184,7 +187,7 @@ Based on the provided image, perform the following analyses:
       };
 
       const response = await this.genAI.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3-flash-preview',
         config: generationConfig,
         contents: `${JSON.stringify(macronutrientDto.items)}
        You are a nutrition calculator.
@@ -218,16 +221,8 @@ OUTPUT â€¢ Return **only** a JSON object that exactly matches the schema belowâ€
 
       if (!response || !response.text) return;
 
-      // this.supabaseService.saveFoodItems(
-      //   response.foodItems,
-      //   'name',
-      //   '550e8400-e29b-41d4-a716-446655440000',
-      //   'mealType',
-      //   'date',
-      // );
-      // return response;
       return response.text;
-    } catch (error) {
+    } catch (error: any) {
       throw new Error(`Error analyzing image: ${error.message}`);
     }
   }

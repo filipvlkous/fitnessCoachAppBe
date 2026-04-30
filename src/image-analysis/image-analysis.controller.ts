@@ -1,4 +1,10 @@
-import { BadRequestException, Body, Controller, Post } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  InternalServerErrorException,
+  Post,
+} from '@nestjs/common';
 import { ImageAnalysisService } from './image-analysis.service';
 import { AnalyzeFoodDto, AnalyzeFoodResponseDto } from './dto/image.dto';
 import { SupabaseService } from 'src/supabase/supabase.service';
@@ -14,6 +20,7 @@ export class ImageAnalysisController {
 
   @Post('food/analyze')
   async analyzeFoodImage(@Body() analyzeFoodDto: AnalyzeFoodDto) {
+    console.log('Received image analysis request:', analyzeFoodDto);
     const { imageBase64 } = analyzeFoodDto;
 
     try {
@@ -29,8 +36,11 @@ export class ImageAnalysisController {
         data: analysisResult,
         message: 'Food analysis completed successfully.',
       };
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
+      throw new InternalServerErrorException(
+        error?.message ?? 'Image analysis failed.',
+      );
     }
   }
 

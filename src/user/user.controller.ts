@@ -48,7 +48,14 @@ export class UserController {
 
   @Get('dailyMeals/:id')
   async getDailyMeals(@Param('id') id: string) {
-    return this.userService.getDailyMeals(id);
+    const meals = await this.userService.getDailyMeals(id);
+    return { body: meals };
+  }
+
+  @Get('dailyMacros/:id')
+  async getDailyMacros(@Param('id') id: string) {
+    const macros = await this.userService.getDailyMacros(id);
+    return { body: macros };
   }
 
   @Post('assign-user-to-coach/:userId')
