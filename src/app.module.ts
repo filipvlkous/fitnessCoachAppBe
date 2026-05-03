@@ -13,6 +13,7 @@ import { WorkoutHistoryModule } from './workoutHistory/workoutHistory.module';
 import { FeedModule } from './feed/feed.module';
 import { SupplementsModule } from './supplements/supplements.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { MacrosModule } from './macros/macros.module';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { NotificationsModule } from './notifications/notifications.module';
     FeedModule,
     SupplementsModule,
     NotificationsModule,
+    MacrosModule,
   ],
   controllers: [AppController],
   providers: [AppService],
