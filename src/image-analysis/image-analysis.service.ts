@@ -1,8 +1,16 @@
 import { Injectable } from '@nestjs/common';
 // import { GoogleGenerativeAI } from '@google/generative-ai';
 import { GoogleGenAI, Type } from '@google/genai';
-import { AnalyzeFoodResponseDto, FoodItemResponse } from './dto/image.dto';
-import { count } from 'console';
+import { AnalyzeFoodResponseDto } from './dto/image.dto';
+
+export interface MealAnalysis {
+  foodTitle: string;
+  mealScore: number;
+  foodArray: {
+    name: string;
+    weight: number;
+  }[];
+}
 
 @Injectable()
 export class ImageAnalysisService {
@@ -12,26 +20,44 @@ export class ImageAnalysisService {
     this.genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) || '';
   }
 
-  async analyzeImage(base64: string): Promise<any> {
+  async analyzeImage(base64: string): Promise<MealAnalysis | null> {
     try {
-      // Strip data URL prefix if present (e.g. "data:image/jpeg;base64,...")
       const rawBase64 = base64.includes(',') ? base64.split(',')[1] : base64;
 
       const generationConfig = {
         temperature: 0,
         responseMimeType: 'application/json',
+        // 2. Move your instructions INTO the schema using the 'description' field
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            foodTitle: { type: Type.STRING },
-            mealScore: { type: Type.NUMBER },
+            foodTitle: {
+              type: Type.STRING,
+              description:
+                "A concise and descriptive title for the overall meal (e.g., 'Cheeseburger with French Fries').",
+            },
+            mealScore: {
+              type: Type.NUMBER,
+              description:
+                'Evaluate overall healthiness based on ingredients. Provide a score from 0 (least healthy) to 100 (most healthy).',
+            },
             foodArray: {
               type: Type.ARRAY,
+              description:
+                'Detect each distinct food item. For composite dishes (like burgers), break them down into their primary components (e.g., bun, patty, lettuce).',
               items: {
                 type: Type.OBJECT,
                 properties: {
-                  name: { type: Type.STRING },
-                  weight: { type: Type.NUMBER },
+                  name: {
+                    type: Type.STRING,
+                    description:
+                      "The common, recognizable name of the specific food item or component (e.g., 'cheddar cheese slice').",
+                  },
+                  weight: {
+                    type: Type.NUMBER,
+                    description:
+                      "Your realistic estimate of the item's weight in grams.",
+                  },
                 },
                 required: ['name', 'weight'],
               },
@@ -39,120 +65,51 @@ export class ImageAnalysisService {
           },
           required: ['foodArray', 'foodTitle', 'mealScore'],
         },
+        // 3. Move the persona definition to the system instruction where it belongs
+        systemInstruction:
+          'You are an expert AI food analyst and nutritionist.',
       };
 
-      const imageAnalysisPrompt = `
-You are an expert AI food analyst. Your task is to analyze an image of food and return a detailed breakdown in JSON format.
-
-**Your response must be a single, valid JSON object adhering strictly to the structure specified below. Do not include any explanations, comments, markdown formatting, or any characters outside the JSON structure itself.**
-
-Based on the provided image, perform the following analyses:
-
-1.  **"foodTitle" (String)**: Identify a concise and descriptive title for the overall meal (e.g., "Cheeseburger with French Fries", "Margherita Pizza", "Chicken Salad").
-2.  **"foodArray" (Array of Objects)**:
-    * Detect each distinct food item in the image.
-    * For composite dishes (e.g., a burger), break them down into their primary individual components (e.g., for a burger: "top bun", "beef patty", "cheese slice", "lettuce", "bottom bun", "tomato slice").
-    * For each item, provide:
-        * **"name" (String)**: The common, recognizable name of the food item (e.g., "top bun", "tomato slice", "grilled chicken breast"). Use exact, commonly known names.
-        * **"weight" (Number)**: Your realistic estimate of the item's weight in **grams**. This must be a numerical value (e.g., 50, 120.5). Ensure weights are realistic based on the image.
-3.  **"mealScore" (Number)**: Evaluate the overall healthiness of the meal and provide a score between 0 (least healthy) and 100 (most healthy). Consider the ingredients and general nutritional aspects. This must be a numerical value.
-
-**JSON Output Structure (this is a template, provide actual values):**
-
-\`\`\`json
-{
-  "foodTitle": "<Descriptive title of the meal>",
-  "mealScore": <Numerical healthiness score (0-100)>,
-  "foodArray": [
-    {
-      "name": "<Name of first food item>",
-      "weight": <Estimated weight in grams for first item (e.g., 75)>
-    },
-    {
-      "name": "<Name of second food item>",
-      "weight": <Estimated weight in grams for second item (e.g., 150.2)>
-    }
-    // ... more items if present
-  ]
-}
-\`\`\`
-
-**Important Considerations:**
-* **Accuracy**: Strive for accurate identification of food items and realistic weight estimations.
-* **Specificity**: Be specific with item names (e.g., "whole wheat bun" instead of just "bun" if discernible; "chicken thigh" vs "chicken breast").
-* **Completeness**: Identify all visible food components.
-* **Strict JSON**: Ensure the output is *only* the JSON object, perfectly formatted according to the schema enforced by the system.
-
-**Example of a valid JSON response (what your output should look like):**
-
-\`\`\`json
-{
-  "foodTitle": "Classic Beef Burger and Fries",
-  "mealScore": 35,
-  "foodArray": [
-    {
-      "name": "top sesame seed bun",
-      "weight": 35
-    },
-    {
-      "name": "lettuce leaf",
-      "weight": 10
-    },
-    {
-      "name": "tomato slice",
-      "weight": 20
-    },
-    {
-      "name": "cheddar cheese slice",
-      "weight": 18
-    },
-    {
-      "name": "beef patty",
-      "weight": 110
-    },
-    {
-      "name": "bottom sesame seed bun",
-      "weight": 35
-    },
-    {
-      "name": "french fries",
-      "weight": 150
-    }
-  ]
-}
-\`\`\`
-`;
+      // 4. Strip the prompt down to just the core task. No JSON formatting rules needed!
+      const imageAnalysisPrompt =
+        'Analyze this image of food. Deconstruct it into its individual components, estimate the weight of each in grams, and provide an overall healthiness score.';
 
       const contents = [
-        imageAnalysisPrompt,
         {
-          inlineData: {
-            data: rawBase64,
-            mimeType: 'image/jpeg',
-          },
+          role: 'user',
+          parts: [
+            { text: imageAnalysisPrompt },
+            {
+              inlineData: {
+                data: rawBase64,
+                mimeType: 'image/jpeg',
+              },
+            },
+          ],
         },
       ];
 
       const response = await this.genAI.models.generateContent({
-        model: 'gemini-3-flash-preview',
+        model: 'gemini-3-flash-preview', // Ensure this matches your intended model
         contents: contents,
         config: generationConfig,
       });
 
-      if (!response || !response.text) return;
+      if (!response || !response.text) return null;
 
-      return response.text;
+      // 5. Parse the guaranteed JSON string into your TypeScript interface
+      return JSON.parse(response.text) as MealAnalysis;
     } catch (error: any) {
+      console.error('Image analysis failed:', error);
       throw new Error(`Error analyzing image: ${error.message}`);
     }
   }
-
   async getMacronutrients(
     macronutrientDto: AnalyzeFoodResponseDto,
   ): Promise<any> {
     try {
       const generationConfig = {
-        temperature: 0,
+        temperature: 0.1,
         responseMimeType: 'application/json',
         responseSchema: {
           type: Type.OBJECT,
@@ -189,34 +146,16 @@ Based on the provided image, perform the following analyses:
       const response = await this.genAI.models.generateContent({
         model: 'gemini-3-flash-preview',
         config: generationConfig,
-        contents: `${JSON.stringify(macronutrientDto.items)}
-       You are a nutrition calculator.
-
-INPUT • A single JSON object with one property, **foodArray**.
-Each element of *foodArray* contains:
-  • **name** (string) – common name of the food item  
-  • **weight** (number) – weight in grams of ONE individual piece  
-  • **nutritionScore** (number, 1 – 100) – relative healthfulness of the item  
-
-TASK • For every element, estimate realistic macronutrient values **per ONE piece** using standard nutrition references and weight and your experience. Together it have to add up to realistic value of the whole food item nutritional value.
-
-OUTPUT • Return **only** a JSON object that exactly matches the schema below—no extra keys, comments, or text:
-
-{
-  "foodArray": [
-    {
-      "name": "string",
-      "weight": number,
-      "calories": number,
-      "carbs": number,
-      "fat": number,
-      "protein": number,
-      "nutritionScore": number
-    }
-    // …repeat for each item
-  ]
-}
-`,
+        contents: `
+          INPUT: ${JSON.stringify(macronutrientDto.items)}
+          
+          TASK: You are an expert nutrition database. For every food item in the input array, estimate its standard macronutrients (protein, fat, carbs) and calories.
+          
+          RULES:
+          - Values must be based on the provided 'weight' in grams.
+          - Values must align with the provided 'nutritionScore'.
+          - Provide realistic estimates per ONE piece.
+        `,
       });
 
       if (!response || !response.text) return;

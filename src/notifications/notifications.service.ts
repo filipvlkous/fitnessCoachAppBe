@@ -21,43 +21,31 @@ export class NotificationsService {
   constructor(private readonly supabaseService: SupabaseService) {}
 
   async savePushToken(userId: string, dto: SavePushTokenDto) {
-    const { data: updated, error: updateError } = await this.supabaseService.supabase
+    const { data, error } = await this.supabaseService.supabase
       .from('user_push_tokens')
-      .update({ token: dto.token, platform: dto.platform })
-      .eq('user_id', userId)
+      .upsert(
+        {
+          user_id: userId,
+          token: dto.token,
+          platform: dto.platform,
+        },
+        { onConflict: 'token' }, // if token exists, update its user_id
+      )
       .select();
 
-    if (updateError) {
-      throw new Error(`Error saving push token: ${updateError.message}`);
+    if (error) {
+      throw new Error(`Error saving push token: ${error.message}`);
     }
 
-    if (updated && updated.length > 0) {
-      return updated;
-    }
-
-    const { data: inserted, error: insertError } = await this.supabaseService.supabase
-      .from('user_push_tokens')
-      .insert({ user_id: userId, token: dto.token, platform: dto.platform })
-      .select();
-
-    if (insertError) {
-      throw new Error(`Error saving push token: ${insertError.message}`);
-    }
-
-    return inserted;
+    return data;
   }
 
-  async deletePushToken(userId: string) {
+  async deletePushToken(userId: string, token?: string) {
     const { error } = await this.supabaseService.supabase
       .from('user_push_tokens')
       .delete()
       .eq('user_id', userId);
-
-    if (error) {
-      throw new Error(`Error deleting push token: ${error.message}`);
-    }
-
-    return { message: 'Push token removed' };
+    // .eq('token', token); // only delete this device's token
   }
 
   async sendToUser(userId: string, dto: SendNotificationDto) {
@@ -116,12 +104,12 @@ export class NotificationsService {
   private async dispatchToExpo(message: ExpoMessage[]) {
     const response = await fetch(EXPO_PUSH_URL, {
       method: 'POST',
-       headers: {
-      Accept: 'application/json',
-      'Accept-encoding': 'gzip, deflate',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(message),
+      headers: {
+        Accept: 'application/json',
+        'Accept-encoding': 'gzip, deflate',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(message),
     });
 
     if (!response.ok) {

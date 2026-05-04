@@ -30,10 +30,14 @@ export class ImageAnalysisController {
 
       const analysisJson =
         await this.imageAnalysisService.analyzeImage(imageBase64);
-      const analysisResult = JSON.parse(analysisJson);
-
+        if (!analysisJson) {
+          throw new InternalServerErrorException(
+            'Failed to analyze the image.',
+          );
+        }
+     
       return {
-        data: analysisResult,
+        data: analysisJson,
         message: 'Food analysis completed successfully.',
       };
     } catch (error: any) {

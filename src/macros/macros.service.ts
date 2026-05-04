@@ -16,7 +16,6 @@ export class MacrosService {
       if (error.code === 'PGRST116') return null;
       throw new Error(`Error fetching macros: ${error.message}`);
     }
-    console.log('Fetched macros:', data);
     return data;
   }
 
@@ -28,10 +27,17 @@ export class MacrosService {
       .eq('day', day).single();
 
     if (error) {
-      if (error.code === 'PGRST116') return null;
+      if (error.code === 'PGRST116') {
+        return {
+          day: day,
+          calories: 0,
+          protein: 0,
+          carbs: 0,
+          fats: 0,
+        };
+      }
       throw new Error(`Error fetching macros: ${error.message}`);
     }
-    console.log('Fetched macros:', data);
     return data;
   }
 

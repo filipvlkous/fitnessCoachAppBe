@@ -89,10 +89,16 @@ export class SupabaseService {
 
       if (mealErr) throw mealErr;
 
-      const ingredients = parsed.foodArray.map((i) => ({
-        meal_id: mealRow.id,
-        ...i,
-      }));
+const ingredients = parsed.foodArray.map((i) => ({
+  meal_id: mealRow.id,
+  name: i.name,
+  weight: Math.round(i.weight || 0),
+  protein: Math.round(i.protein || 0),
+  fat: Math.round(i.fat || 0),
+  carbs: Math.round(i.carbs || 0),
+  calories: Math.round(i.calories || 0),
+  nutritionScore: Math.round(i.nutritionScore || 0),
+}));
 
       const { error: ingErr } = await this.supabase
         .from('meal_ingredients')
