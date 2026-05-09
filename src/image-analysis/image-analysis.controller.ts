@@ -6,7 +6,11 @@ import {
   Post,
 } from '@nestjs/common';
 import { ImageAnalysisService } from './image-analysis.service';
-import { AnalyzeFoodDto, AnalyzeFoodResponseDto } from './dto/image.dto';
+import {
+  AnalyzeFoodDto,
+  AnalyzeFoodResponseDto,
+  ManualFoodEntryDto,
+} from './dto/image.dto';
 import { SupabaseService } from 'src/supabase/supabase.service';
 import { ok } from 'assert';
 import { localDateStr } from 'utils/getLocalTime';
@@ -20,7 +24,6 @@ export class ImageAnalysisController {
 
   @Post('food/analyze')
   async analyzeFoodImage(@Body() analyzeFoodDto: AnalyzeFoodDto) {
-    console.log('Received image analysis request:', analyzeFoodDto);
     const { imageBase64 } = analyzeFoodDto;
 
     try {
@@ -30,12 +33,10 @@ export class ImageAnalysisController {
 
       const analysisJson =
         await this.imageAnalysisService.analyzeImage(imageBase64);
-        if (!analysisJson) {
-          throw new InternalServerErrorException(
-            'Failed to analyze the image.',
-          );
-        }
-     
+      if (!analysisJson) {
+        throw new InternalServerErrorException('Failed to analyze the image.');
+      }
+
       return {
         data: analysisJson,
         message: 'Food analysis completed successfully.',
@@ -44,6 +45,42 @@ export class ImageAnalysisController {
       console.error(error);
       throw new InternalServerErrorException(
         error?.message ?? 'Image analysis failed.',
+      );
+    }
+  }
+
+  /** Manually add macros for a single food item without image analysis. */
+  @Post('food/manual')
+  async addFoodManually(@Body() dto: ManualFoodEntryDto) {
+    try {
+      const foodItems = JSON.stringify({
+        foodArray: [
+          {
+            name: dto.item.name,
+            weight: dto.item.weight,
+            protein: dto.item.protein,
+            fat: dto.item.fat,
+            carbs: dto.item.carbs,
+            calories: dto.item.calories,
+            nutritionScore: 0,
+          },
+        ],
+      });
+
+      await this.supabaseService.saveFoodItems(
+        foodItems,
+        dto.name,
+        dto.id,
+        dto.category,
+        localDateStr(dto.date),
+        dto.meal_score ?? 0,
+      );
+
+      return { message: 'Food entry saved successfully.' };
+    } catch (error: any) {
+      console.error(error);
+      throw new InternalServerErrorException(
+        error?.message ?? 'Failed to save manual food entry.',
       );
     }
   }

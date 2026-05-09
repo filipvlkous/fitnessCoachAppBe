@@ -26,12 +26,14 @@ import {
   UserScopedCacheInterceptor,
   userCacheKey,
 } from 'utils/user-cache.interceptor';
+import { NotificationsService } from 'src/notifications/notifications.service';
 
 @Controller('programs')
 @UseGuards(SupabaseAuthGuard)
 export class ProgramsController {
   constructor(
     private programsService: ProgramsService,
+    private notificationsService: NotificationsService,
     @Inject(CACHE_MANAGER) private cacheManager: CacheManagerTypes.Cache,
   ) {}
 
@@ -69,11 +71,21 @@ export class ProgramsController {
     );
   }
 
-  private async invalidateDayCache(userId: string, dayId: string) {
+  private async invalidateDayCache(requesterId: string, dayId: string) {
+    // Always clear the day entry for the requester (may be the athlete themselves)
     await this.cacheManager.del(
-      userCacheKey(userId, `/programs/days/${dayId}`),
+      userCacheKey(requesterId, `/programs/days/${dayId}`),
     );
-    await this.invalidateUserCache(userId);
+    await this.invalidateUserCache(requesterId);
+
+    // If a coach is making the change, also clear the athlete's caches so they see the update immediately
+    const athleteId = await this.programsService.getAthleteIdForDay(dayId);
+    if (athleteId && athleteId !== requesterId) {
+      await this.cacheManager.del(
+        userCacheKey(athleteId, `/programs/days/${dayId}`),
+      );
+      await this.invalidateUserCache(athleteId);
+    }
   }
 
   @UseInterceptors(CacheInterceptor)
@@ -100,12 +112,6 @@ export class ProgramsController {
     @Param('programId') programId: string,
     @Body() updateDto: dto.UpdateProgramDto,
   ) {
-    console.log(
-      'Updating program with ID:',
-      programId,
-      'with data:',
-      updateDto,
-    );
     const result = await this.programsService.updateProgram(
       programId,
       updateDto,
@@ -233,7 +239,7 @@ export class ProgramsController {
   @Post('days/:dayId/exercises')
   async addExercise(
     @Param('dayId') dayId: string,
-    @Body() body: { exercises: dto.AddExerciseDto[] },
+    @Body() body: { exercises: dto.AddExerciseDto[]; userId: string },
     @Req() req: any,
   ) {
     const result = await this.programsService.addExerciseToDay(
@@ -241,6 +247,10 @@ export class ProgramsController {
       dayId,
     );
     await this.invalidateDayCache(req.user.id, dayId); // Better invalidation scope
+    this.notificationsService.sendToUser(body.userId, {
+      title: 'Program Updated',
+      body: `Exercises have been updated for your program day. Please check the app for details.`,
+    });
     return result;
   }
 
@@ -250,6 +260,7 @@ export class ProgramsController {
     @Body() updateDto: dto.UpdateExercisesDto,
     @Req() req: any,
   ) {
+    console.log('Updating exercises for dayId:', updateDto);
     const result = await this.programsService.updateAssignedExercises(
       dayId,
       updateDto.exercises,
@@ -299,14 +310,33 @@ export class ProgramsController {
   }
 
   @Post('workouts/logWorkoutSets')
-  logExerciseSets(@Body() exerciseDto: dto.LogExerciseDto) {
-    return this.programsService.logExerciseSets(exerciseDto);
+  async logExerciseSets(
+    @Body() exerciseDto: dto.LogExerciseDto,
+    @Req() req: any,
+  ) {
+    const result = await this.programsService.logExerciseSets(exerciseDto);
+    await this.cacheManager.del(
+      userCacheKey(
+        req.user.id,
+        `/programs/workouts/${exerciseDto.workout_log_id}`,
+      ),
+    );
+    return result;
   }
 
   @Post('workouts/logCardio')
-  logCardio(@Body() cardioDto: dto.LogCardioDto) {
-    console.log('Received cardio log:', cardioDto);
-    return this.programsService.logCardio(cardioDto);
+  async logCardio(@Body() cardioDto: dto.LogCardioDto, @Req() req: any) {
+    const result = await this.programsService.logCardio(cardioDto);
+    await Promise.all([
+      this.cacheManager.del(
+        userCacheKey(
+          req.user.id,
+          `/programs/workouts/${cardioDto.workout_log_id}`,
+        ),
+      ),
+      this.invalidateUserCache(req.user.id),
+    ]);
+    return result;
   }
 
   @Put('workouts/:workout_id/complete')

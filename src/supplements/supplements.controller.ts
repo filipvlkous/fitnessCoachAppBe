@@ -23,9 +23,8 @@ export class SupplementsController {
   @Post(':userId')
   async addSupplement(
     @Param('userId') userId: string,
-    @Body() body:{id:string},
+    @Body() body: { id: string },
   ) {
-    console.log('Adding supplement for user:', userId, 'with supplement ID:', body.id);
     return this.supplementsService.addSupplementToUser(userId, body.id);
   }
 
@@ -34,6 +33,9 @@ export class SupplementsController {
     @Param('userId') userId: string,
     @Param('supplementId') supplementId: string,
   ) {
-    return this.supplementsService.removeSupplementFromUser(userId, supplementId);
+    return this.supplementsService.removeSupplementFromUser(
+      userId,
+      supplementId,
+    );
   }
 }

@@ -1,10 +1,14 @@
 import { Injectable } from '@nestjs/common';
+import { NotificationsService } from 'src/notifications/notifications.service';
 import { SupabaseService } from 'src/supabase/supabase.service';
 import { localDateStr } from 'utils/getLocalTime';
 
 @Injectable()
 export class UserService {
-  constructor(private readonly supabaseService: SupabaseService) {}
+  constructor(
+    private readonly supabaseService: SupabaseService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   async getAllUsers(userId: string) {
     const { data, error } = await this.supabaseService.supabase
@@ -12,8 +16,6 @@ export class UserService {
       .select('first_name, last_name, id')
       .eq('coach_id', userId)
       .eq('role', 'user');
-
-      console.log('All users data:', data); 
 
     if (error) {
       if (error.code === '42703') return [];
@@ -84,65 +86,6 @@ export class UserService {
     return data;
   }
 
-  async getDailyMeals(userId: string) {
-    try {
-      const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-
-      const { data, error } = await this.supabaseService.supabase
-        .from('meals')
-        .select('*')
-        .eq('user_id', userId)
-        .gte('meal_time', `${today} 00:00:00+00`)
-        .lt('meal_time', `${today} 23:59:59+00`);
-
-      console.log('Daily meals data:', data);
-      if (error) {
-        if (error.code === 'PGRST116') {
-          // PGRST116 is the “no rows” error code when you use .single()
-          return [];
-        }
-        throw new Error(`Error fetching daily goal: ${error.message}`);
-      }
-
-      return data;
-    } catch (error: any) {
-      throw new Error(`Error fetching daily meals: ${error.message}`);
-    }
-  }
-
-  async getDailyMacros(userId: string) {
-    try {
-      // Use Prague timezone for 'today'
-      const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Prague' });
-
-      console.log(today)
-      const { data, error } = await this.supabaseService.supabase
-        .from('meals')
-        .select('total_calories, total_carbs, total_fat, total_protein')
-        .eq('user_id', userId)
-        .gte('meal_time', `${today} 00:00:00+00`)
-        .lt('meal_time', `${today} 23:59:59+00`);
-
-      if (error) {
-        throw new Error(`Error fetching daily macros: ${error.message}`);
-      }
-
-      const totals = (data || []).reduce(
-        (acc, meal) => ({
-          total_calories: acc.total_calories + (meal.total_calories || 0),
-          total_carbs: acc.total_carbs + (meal.total_carbs || 0),
-          total_fat: acc.total_fat + (meal.total_fat || 0),
-          total_protein: acc.total_protein + (meal.total_protein || 0),
-        }),
-        { total_calories: 0, total_carbs: 0, total_fat: 0, total_protein: 0 },
-      );
-
-      return totals;
-    } catch (error: any) {
-      throw new Error(`Error fetching daily macros: ${error.message}`);
-    }
-  }
-
   async updateUserFitnessMacros(userId: string, fitnessMacros: any) {
     const { data, error } = await this.supabaseService.supabase
       .from('user') // Assuming the table is named 'user'
@@ -201,6 +144,7 @@ export class UserService {
       .eq(param, userId)
       .in('status', ['approved', 'pending']);
 
+    console.log('Assigned users data:', data);
     if (error) {
       throw new Error(`Error fetching assigned users: ${error.message}`);
     }
@@ -235,6 +179,10 @@ export class UserService {
       throw new Error(`Error approving user: ${userError.message}`);
     }
 
+    this.notificationsService.sendToUser(userId, {
+      title: 'Coach Assignment Approved',
+      body: 'Your request to be assigned to the coach has been approved.',
+    });
     return data;
   }
 
@@ -249,7 +197,10 @@ export class UserService {
     if (error) {
       throw new Error(`Error rejecting user: ${error.message}`);
     }
-
+    this.notificationsService.sendToUser(data.user_id, {
+      title: 'Coach Assignment Rejected',
+      body: 'Your request to be assigned to the coach has been rejected.',
+    });
     return data;
   }
 
@@ -261,14 +212,12 @@ export class UserService {
       .order('created_at', { ascending: false })
       .limit(limit);
 
-
     if (error) {
       throw new Error(`Error fetching weight history: ${error.message}`);
     }
 
     return data;
   }
-
 
   async addWeightEntry(userId: string, weight: number, date?: string) {
     const { data, error } = await this.supabaseService.supabase

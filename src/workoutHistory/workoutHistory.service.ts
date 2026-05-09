@@ -109,10 +109,12 @@ export class WorkoutHistoryService {
     };
   }
 
-async getWorkoutHistoryForUserDayShort(id: string) {
-  console.log(id)
-  const [{ data: workoutLog, error: workoutError }, { data: exerciseLogs }, { count: cardioCount }] =
-    await Promise.all([
+  async getWorkoutHistoryForUserDayShort(id: string) {
+    const [
+      { data: workoutLog, error: workoutError },
+      { data: exerciseLogs },
+      { count: cardioCount },
+    ] = await Promise.all([
       this.supabaseService.supabase
         .from('workout_logs')
         .select('user_program_days ( day_name )')
@@ -130,19 +132,21 @@ async getWorkoutHistoryForUserDayShort(id: string) {
         .eq('workout_log_id', id),
     ]);
 
-  if (workoutError) return null;
+    if (workoutError) return null;
 
-  const exerciseCount = new Set((exerciseLogs ?? []).map((e: any) => e.exercises_id)).size;
-  const programDay = Array.isArray(workoutLog?.user_program_days)
-    ? workoutLog.user_program_days[0]
-    : workoutLog?.user_program_days;
+    const exerciseCount = new Set(
+      (exerciseLogs ?? []).map((e: any) => e.exercises_id),
+    ).size;
+    const programDay = Array.isArray(workoutLog?.user_program_days)
+      ? workoutLog.user_program_days[0]
+      : workoutLog?.user_program_days;
 
-  return {
-    dayName: programDay?.day_name ?? null,
-    exerciseCount: exerciseCount ?? 0,
-    cardioCount: cardioCount ?? 0,
-  };
-}
+    return {
+      dayName: programDay?.day_name ?? null,
+      exerciseCount: exerciseCount ?? 0,
+      cardioCount: cardioCount ?? 0,
+    };
+  }
 
   async getWeekStatus(
     userId: string,

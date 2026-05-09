@@ -34,3 +34,19 @@ export class FoodItemResponse {
   carbs: number;
   calories: number;
 }
+
+export class ManualFoodEntryDto {
+  id: string;
+  name: string;
+  category: string;
+  date: Date;
+  meal_score?: number;
+  item: {
+    name: string;
+    weight: number;
+    protein: number;
+    fat: number;
+    carbs: number;
+    calories: number;
+  };
+}

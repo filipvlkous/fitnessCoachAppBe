@@ -230,6 +230,9 @@ export class UpdateExercisesDto {
   @ValidateNested({ each: true })
   @Type(() => UpdateAssignedExerciseDto)
   exercises: UpdateAssignedExerciseDto[];
+
+  @IsString()
+  userId: string;
 }
 
 // ============================================

@@ -207,7 +207,6 @@ export class ExercisesService {
           .from('images')
           .getPublicUrl(imagePath);
 
-        console.log(imageUrl);
         urls.img_url = imageUrl.publicUrl;
       }
 
@@ -298,13 +297,11 @@ export class ExercisesService {
       bucketMap.set(location.bucket, list);
     }
 
-    console.log(bucketMap);
     for (const [bucket, paths] of bucketMap.entries()) {
       const { data, error: storageError } = await this.supabase.storage
         .from(bucket)
         .remove(paths);
 
-      console.log(storageError, data);
       if (storageError)
         throw new Error(`Storage deletion failed: ${storageError.message}`);
     }

@@ -456,7 +456,6 @@ export class ProgramsService {
   // Add exercise to a day
   async addExerciseToDay(dto: AddExerciseDto | AddExerciseDto[], id: string) {
     const items = Array.isArray(dto) ? dto : [dto];
-    console.log('Adding exercises to day:', items);
     const sanitized = items.map(
       ({
         program_day_id,
@@ -508,6 +507,12 @@ export class ProgramsService {
       .single();
 
     if (error) throw new Error(error.message);
+
+    this.notificationsService.sendToUser(data.user_id, {
+      title: 'Exercise Updated',
+      body: `Your coach has updated an exercise in your program. Check it out!`,
+    });
+
     return data;
   }
 
@@ -521,6 +526,12 @@ export class ProgramsService {
       .single();
 
     if (error) throw new Error(error.message);
+
+    // this.notificationsService.sendToUser(data.user_id, {
+    //   title: 'Exercise Removed',
+    //   body: `Your coach has removed an exercise from your program. Check your updated plan!`,})
+
+
     return {
       message: 'Exercise removed successfully',
       program_day_id: data?.program_day_id,
@@ -572,6 +583,24 @@ export class ProgramsService {
     if (firstError) throw new Error(firstError.message);
 
     return results.map((result) => result.data);
+  }
+
+  // Resolve the athlete's user_id from a program day id.
+  // Used by the controller to invalidate the correct user's cache when a coach mutates a day.
+  async getAthleteIdForDay(dayId: string): Promise<string | null> {
+    const { data, error } = await this.supabase
+      .from('user_program_days')
+      .select('user_workout_programs!inner(user_id)')
+      .eq('id', dayId)
+      .single();
+
+    if (error || !data) return null;
+    const programs = data['user_workout_programs'] as
+      | { user_id: string }
+      | { user_id: string }[];
+    return Array.isArray(programs)
+      ? (programs[0]?.user_id ?? null)
+      : (programs?.user_id ?? null);
   }
 
   // ============================================

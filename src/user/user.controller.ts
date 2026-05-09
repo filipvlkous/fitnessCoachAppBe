@@ -46,18 +46,6 @@ export class UserController {
     return goal;
   }
 
-  @Get('dailyMeals/:id')
-  async getDailyMeals(@Param('id') id: string) {
-    const meals = await this.userService.getDailyMeals(id);
-    return { body: meals };
-  }
-
-  @Get('dailyMacros/:id')
-  async getDailyMacros(@Param('id') id: string) {
-    const macros = await this.userService.getDailyMacros(id);
-    return { body: macros };
-  }
-
   @Post('assign-user-to-coach/:userId')
   async assignUserToCoach(
     @Param('userId') userId: string,
@@ -80,7 +68,6 @@ export class UserController {
     @Param('userId') userId: string,
     @Body('status') status: boolean,
   ) {
-    console.log(status);
     if (status) {
       return this.userService.approveUser(relationId, userId);
     } else {

@@ -14,6 +14,7 @@ import { FeedModule } from './feed/feed.module';
 import { SupplementsModule } from './supplements/supplements.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { MacrosModule } from './macros/macros.module';
+import { CoachProfileModule } from './coachProfile/coachProfile.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { MacrosModule } from './macros/macros.module';
     SupplementsModule,
     NotificationsModule,
     MacrosModule,
+    CoachProfileModule,
   ],
   controllers: [AppController],
   providers: [AppService],
