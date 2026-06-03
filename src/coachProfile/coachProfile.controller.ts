@@ -157,13 +157,22 @@ async uploadGalleryImages(
     @Param('clientId') clientId: string,
     @Body() reviewDto: { rating: number; comment?: string },
   ) {
-       return this.coachProfileService.addReview(coachId, clientId, reviewDto.rating, reviewDto.comment);
+    console.log(
+      `Adding review for coach ${coachId} by client ${clientId}:`,
+      reviewDto,
+    );
+    return await this.coachProfileService.addReview(
+      coachId,
+      clientId,
+      reviewDto.rating,
+      reviewDto.comment,
+    );
   }
 
    @Get('review/:coachId')
   async getReviews(
     @Param('coachId') coachId: string,
   ) {
-       return this.coachProfileService.getReviews(coachId);
+       return await this.coachProfileService.getReviews(coachId);
   }
 }

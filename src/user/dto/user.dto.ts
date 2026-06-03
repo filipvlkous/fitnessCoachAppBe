@@ -75,3 +75,33 @@ export class UpdateUserDto {
   @IsOptional()
   activityLevel?: string;
 }
+
+export class UpdateProfileDto {
+  @IsNumber()
+  @IsOptional()
+  weight?: number;
+
+  @IsNumber()
+  @IsOptional()
+  height?: number;
+
+  @IsNumber()
+  @IsOptional()
+  age?: number;
+
+  @IsString()
+  @IsOptional()
+  sex?: string;
+
+  @IsString()
+  @IsOptional()
+  goal?: string;
+
+  @IsString()
+  @IsOptional()
+  activity_level?: string;
+
+  @IsString()
+  @IsOptional()
+  bio?: string;
+}

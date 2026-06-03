@@ -45,27 +45,17 @@ export class WorkoutHistoryController {
 
   @UseInterceptors(UserScopedCacheInterceptor)
   @CacheTTL(60000)
-  @Get('streak')
-  async getWorkoutStreak(
-    @Req() req: authenticatedRequestInterface.AuthenticatedRequest,
-  ) {
-    return this.workoutHistoryService.getWorkoutStreek(req.user.id);
+  @Get('userDay/:id/short')
+  async getWorkoutHistoryForUserDayShort(@Param('id') id: string) {
+    console.log('Fetching short workout history for user day with ID:', id);
+    return this.workoutHistoryService.getWorkoutHistoryForUserDayShort(id);
   }
 
-  // FIX: Added invalidation helper here in case you ever add
-  // a "Manual Refresh" or "Re-calculate" button in the history UI.
   @UseInterceptors(UserScopedCacheInterceptor)
   @CacheTTL(60000)
   @Get('userDay/:id')
   async getWorkoutHistoryForUserDay(@Param('id') id: string) {
     return this.workoutHistoryService.getWorkoutHistoryForUserDay(id);
-  }
-
-  @UseInterceptors(UserScopedCacheInterceptor)
-  @CacheTTL(60000)
-  @Get('userDay/:id/short')
-  async getWorkoutHistoryForUserDayShort(@Param('id') id: string) {
-    return this.workoutHistoryService.getWorkoutHistoryForUserDayShort(id);
   }
 
   @UseInterceptors(UserScopedCacheInterceptor)
@@ -76,5 +66,12 @@ export class WorkoutHistoryController {
     @Query('weekStart') weekStart: string,
   ) {
     return this.workoutHistoryService.getWeekStatus(req.user.id, weekStart);
+  }
+
+  @UseInterceptors(UserScopedCacheInterceptor)
+  @CacheTTL(60000)
+  @Get('coach-feed/:coachId')
+  async getCoachFeedLogs(@Param('coachId') coachId: string) {
+    return this.workoutHistoryService.getRecentCoachLogs(coachId);
   }
 }

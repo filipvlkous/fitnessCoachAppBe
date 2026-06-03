@@ -308,6 +308,7 @@ async getPublicProfile(coachId: string): Promise<Partial<CoachProfile>> {
         comment,
       });
 
+      console.log(`Review insert result:`, { error });
     if (error) {
       throw new InternalServerErrorException(error.message);
     }

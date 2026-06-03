@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { NotificationsService } from 'src/notifications/notifications.service';
 import { SupabaseService } from 'src/supabase/supabase.service';
+import { UpdateProfileDto } from './dto/user.dto';
 import { localDateStr } from 'utils/getLocalTime';
 
 @Injectable()
@@ -86,24 +87,6 @@ export class UserService {
     return data;
   }
 
-  async updateUserFitnessMacros(userId: string, fitnessMacros: any) {
-    const { data, error } = await this.supabaseService.supabase
-      .from('user') // Assuming the table is named 'user'
-      .update({
-        fitness_macros: fitnessMacros, // Replace with the actual column name in your database
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', userId)
-      .select()
-      .single();
-
-    if (error) {
-      throw new Error(`Error updating fitness macros: ${error.message}`);
-    }
-
-    return data;
-  }
-
   async assignUserToCoach(userId: string, code: string) {
     const { data } = await this.supabaseService.supabase
       .from('user')
@@ -144,7 +127,6 @@ export class UserService {
       .eq(param, userId)
       .in('status', ['approved', 'pending']);
 
-    console.log('Assigned users data:', data);
     if (error) {
       throw new Error(`Error fetching assigned users: ${error.message}`);
     }
@@ -231,6 +213,126 @@ export class UserService {
 
     if (error) {
       throw new Error(`Error adding weight entry: ${error.message}`);
+    }
+
+    return data;
+  }
+
+  async deleteUser(userId: string) {
+    // Debug: verify user exists in auth first
+    const { data: authUser, error: fetchError } =
+      await this.supabaseService.supabase.auth.admin.getUserById(userId);
+
+    if (fetchError || !authUser) {
+      throw new Error(`User not found in auth: ${fetchError?.message}`);
+    }
+
+    const { error: authError } =
+      await this.supabaseService.supabase.auth.admin.deleteUser(userId);
+
+    if (authError) {
+      throw new Error(`Error deleting user from auth: ${authError.message}`);
+    }
+
+    const { error } = await this.supabaseService.supabase
+      .from('user')
+      .delete()
+      .eq('id', userId);
+
+    if (error) {
+      throw new Error(`Error deleting user: ${error.message}`);
+    }
+
+    return true;
+  }
+
+  async updateUserProfile(userId: string, dto: UpdateProfileDto) {
+    const update: Record<string, unknown> = {};
+    if (dto.weight !== undefined) update.weight = dto.weight;
+    if (dto.height !== undefined) update.height = dto.height;
+    if (dto.age !== undefined) update.age = dto.age;
+    if (dto.sex !== undefined) update.sex = dto.sex;
+    if (dto.goal !== undefined) update.goal = dto.goal;
+    if (dto.activity_level !== undefined) update.activity_level = dto.activity_level;
+    if (dto.bio !== undefined) update.bio = dto.bio;
+
+    if (Object.keys(update).length === 0) {
+      throw new Error('No fields to update');
+    }
+
+    const { data, error } = await this.supabaseService.supabase
+      .from('user_profile')
+      .upsert({ user_id: userId, ...update }, { onConflict: 'user_id' })
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(`Error saving user profile: ${error.message}`);
+    }
+
+    return data;
+  }
+
+  async getUserProfile(userId: string) {
+    console.log(`Fetching profile for user ID: ${userId}`);
+    const { data, error } = await this.supabaseService.supabase
+      .from('user_profile')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
+
+    if (error) {
+      if (error.code === '42703') return null; // No profile found, return null
+      throw new Error(`Error fetching user profile: ${error.message}`);
+    }
+
+    return data;
+  }
+
+  async getBodyPhotos(userId: string) {
+    const { data, error } = await this.supabaseService.supabase
+      .from('user_body_image')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      throw new Error(`Error fetching body photos: ${error.message}`);
+    }
+
+    return data;
+  }
+
+  async addBodyPhoto(userId: string, file: Express.Multer.File, slot?: string) {
+    const fileName = `${userId}/${Date.now()}.jpg`;
+
+    const { error: uploadError } = await this.supabaseService.supabase.storage
+      .from('user')
+      .upload(fileName, file.buffer, {
+        contentType: file.mimetype,
+        upsert: false,
+      });
+
+    if (uploadError) {
+      throw new Error(`Error uploading photo: ${uploadError.message}`);
+    }
+
+    const { data: publicUrlData } = this.supabaseService.supabase.storage
+      .from('user')
+      .getPublicUrl(fileName);
+
+    const { data, error } = await this.supabaseService.supabase
+      .from('user_body_image')
+      .insert({
+        user_id: userId,
+        url: publicUrlData.publicUrl,
+        slot: slot ? Number(slot) : null,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(`Error adding body photo: ${error.message}`);
     }
 
     return data;

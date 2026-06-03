@@ -308,40 +308,6 @@ export class ProgramsService {
     return data;
   }
 
-  // Get all programs for a user
-  async getUserPrograms(userId: string) {
-    const { data, error } = await this.supabase
-      .from('user_workout_programs')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
-
-    if (error) throw new Error(error.message);
-    return data;
-  }
-
-  // Get all programs created by a coach
-  async getCoachPrograms(coachId: string) {
-    const { data, error } = await this.supabase
-      .from('user_workout_programs')
-      .select(
-        `
-        *,
-        users!user_workout_programs_user_id_fkey (
-          id,
-          first_name,
-          last_name,
-          email
-        )
-      `,
-      )
-      .eq('coach_id', coachId)
-      .order('created_at', { ascending: false });
-
-    if (error) throw new Error(error.message);
-    return data;
-  }
-
   // ============================================
   // DAY MANAGEMENT (COACH)
   // ============================================
@@ -402,31 +368,6 @@ export class ProgramsService {
     return data;
   }
 
-  // Get day by week and day number
-  async getProgramDayByNumber(
-    programId: string,
-    weekNumber: number,
-    dayNumber: number,
-  ) {
-    const { data, error } = await this.supabase
-      .from('user_program_days')
-      .select(
-        `
-        *,
-        user_assigned_exercises (
-          *,
-          exercises (*)
-        )
-      `,
-      )
-      .eq('program_id', programId)
-      .eq('week_number', weekNumber)
-      .eq('day_number', dayNumber)
-      .single();
-
-    if (error) throw new NotFoundException('Day not found');
-    return data;
-  }
 
   async updateProgramDayName(user_program_day_id: string, name: string) {
     const { data, error } = await this.supabase
@@ -704,68 +645,6 @@ export class ProgramsService {
     return data;
   }
 
-  // Get workout log with details
-  async getWorkoutLog(workoutLogId: string) {
-    const { data, error } = await this.supabase
-      .from('workout_logs')
-      .select(
-        `
-        *,
-        user_program_days (
-          *,
-          user_workout_programs (
-            name,
-            user_id,
-            coach_id
-          )
-        ),
-        exercise_logs (
-          *,
-          user_assigned_exercises (
-            *,
-            exercises (*)
-          )
-        ),
-        workout_comments (*)
-      `,
-      )
-      .eq('id', workoutLogId)
-      .single();
-
-    if (error) throw new NotFoundException('Workout log not found');
-    return data;
-  }
-
-  // Get workout history for a user
-  async getWorkoutHistory(userId: string, limit = 30) {
-    const { data, error } = await this.supabase
-      .from('workout_logs')
-      .select(
-        `
-        *,
-        user_program_days!inner (
-          *,
-          user_workout_programs!inner (
-            user_id,
-            name,
-            coach_id
-          )
-        ),
-        exercise_logs (
-          *,
-          user_assigned_exercises (
-            exercises (name, muscle_group)
-          )
-        )
-      `,
-      )
-      .eq('user_program_days.user_workout_programs.user_id', userId)
-      .order('workout_date', { ascending: false })
-      .limit(limit);
-
-    if (error) throw new Error(error.message);
-    return data;
-  }
 
   // ============================================
   // COMMENTS
@@ -813,114 +692,6 @@ export class ProgramsService {
     return data;
   }
 
-  // ============================================
-  // ANALYTICS / PROGRESS
-  // ============================================
-
-  // Get exercise progress for a user
-  async getExerciseProgress(userId: string, exerciseId: string, limit = 20) {
-    const { data, error } = await this.supabase
-      .from('exercise_logs')
-      .select(
-        `
-        *,
-        workout_logs!inner (
-          workout_date,
-          user_program_days!inner (
-            week_number,
-            day_number,
-            user_workout_programs!inner (
-              user_id
-            )
-          )
-        ),
-        user_assigned_exercises!inner (
-          exercise_id,
-          planned_weight,
-          planned_reps
-        )
-      `,
-      )
-      .eq(
-        'workout_logs.user_program_days.user_workout_programs.user_id',
-        userId,
-      )
-      .eq('user_assigned_exercises.exercise_id', exerciseId)
-      .order('workout_logs.workout_date', { ascending: false })
-      .limit(limit);
-
-    if (error) throw new Error(error.message);
-    return data;
-  }
-
-  // Get user workout stats
-  async getUserWorkoutStats(userId: string) {
-    const { data: workouts, error } = await this.supabase
-      .from('workout_logs')
-      .select(
-        `
-        id,
-        completed,
-        workout_date,
-        duration_minutes,
-        user_program_days!inner (
-          user_workout_programs!inner (user_id)
-        )
-      `,
-      )
-      .eq('user_program_days.user_workout_programs.user_id', userId);
-
-    if (error) throw new Error(error.message);
-
-    const completedWorkouts = workouts?.filter((w) => w.completed) || [];
-    const totalDuration = completedWorkouts.reduce(
-      (sum, w) => sum + (w.duration_minutes || 0),
-      0,
-    );
-
-    return {
-      total_workouts: workouts?.length || 0,
-      completed_workouts: completedWorkouts.length,
-      total_duration_minutes: totalDuration,
-      average_duration_minutes:
-        completedWorkouts.length > 0
-          ? Math.round(totalDuration / completedWorkouts.length)
-          : 0,
-    };
-  }
-
-  // Get program progress (for coach dashboard)
-  async getProgramProgress(programId: string) {
-    const program = await this.getUserProgram(programId);
-
-    const { data: workouts } = await this.supabase
-      .from('workout_logs')
-      .select(
-        `
-        *,
-        user_program_days!inner (program_id)
-      `,
-      )
-      .eq('user_program_days.program_id', programId);
-
-    const totalExercises =
-      program.user_program_days?.reduce(
-        (sum, day) => sum + (day.user_assigned_exercises?.length || 0),
-        0,
-      ) || 0;
-
-    const completedWorkouts = workouts?.filter((w) => w.completed).length || 0;
-
-    return {
-      program_id: programId,
-      program_name: program.name,
-      total_days: program.user_program_days?.length || 0,
-      total_exercises: totalExercises,
-      total_workouts_logged: workouts?.length || 0,
-      completed_workouts: completedWorkouts,
-      last_workout_date: workouts?.[0]?.workout_date || null,
-    };
-  }
 
   async logCardio(dto: {
     workout_log_id: string;

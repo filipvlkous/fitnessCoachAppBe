@@ -45,19 +45,6 @@ export class WorkoutHistoryService {
     }
   }
 
-  async getWorkoutStreek(id: string) {
-    const { data, error } = await this.supabaseService.supabase
-      .from('user_workout_programs')
-      .select('workout_streek')
-      .eq('user_id', id)
-      .single();
-
-    if (error?.code === 'PGRST116') {
-      return [];
-    }
-    return data;
-  }
-
   async getWorkoutHistoryForUserDay(id: string) {
     const [
       { data: exerciseData, error: exerciseError },
@@ -132,6 +119,7 @@ export class WorkoutHistoryService {
         .eq('workout_log_id', id),
     ]);
 
+    console.log('Workout log:', workoutLog);
     if (workoutError) return null;
 
     const exerciseCount = new Set(
@@ -206,4 +194,20 @@ export class WorkoutHistoryService {
       };
     });
   }
+
+  getRecentCoachLogs = async (coachId: string) => {
+    const { data, error } = await this.supabaseService.supabase
+      .from('workout_summary')
+      .select('*')
+      .eq('coach_id', coachId) // Filter by the specific coach
+      .order('workout_date', { ascending: false }) // Get the most recent dates first
+      .limit(10); // Grab only the last 10
+
+    if (error) {
+      console.error('Error fetching logs:', error);
+      return null;
+    }
+
+    return data;
+  };
 }

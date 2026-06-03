@@ -138,13 +138,6 @@ export class ProgramsController {
 
   @UseInterceptors(UserScopedCacheInterceptor)
   @CacheTTL(60)
-  @Get('users/:userId/all')
-  getUserPrograms(@Param('userId') userId: string) {
-    return this.programsService.getUserPrograms(userId);
-  }
-
-  @UseInterceptors(UserScopedCacheInterceptor)
-  @CacheTTL(60)
   @Get('users/:userId/active')
   getUserActiveProgram(@Param('userId') userId: string) {
     return this.programsService.getUserActiveProgram(userId);
@@ -167,13 +160,6 @@ export class ProgramsController {
     return this.programsService.getUserActiveWeek(user_id);
   }
 
-  @UseInterceptors(UserScopedCacheInterceptor)
-  @CacheTTL(60)
-  @Get('coach/:coachId/programs')
-  getCoachPrograms(@Param('coachId') coachId: string) {
-    return this.programsService.getCoachPrograms(coachId);
-  }
-
   // ============================================
   // DAY MANAGEMENT (COACH)
   // ============================================
@@ -193,21 +179,6 @@ export class ProgramsController {
   @Get('days/:dayId')
   getDay(@Param('dayId') dayId: string) {
     return this.programsService.getProgramDay(dayId);
-  }
-
-  @UseInterceptors(UserScopedCacheInterceptor)
-  @CacheTTL(60)
-  @Get(':programId/week/:weekNumber/day/:dayNumber')
-  getDayByNumber(
-    @Param('programId') programId: string,
-    @Param('weekNumber') weekNumber: number,
-    @Param('dayNumber') dayNumber: number,
-  ) {
-    return this.programsService.getProgramDayByNumber(
-      programId,
-      +weekNumber,
-      +dayNumber,
-    );
   }
 
   @Put('days/:dayId')
@@ -361,23 +332,6 @@ export class ProgramsController {
     return result;
   }
 
-  @UseInterceptors(UserScopedCacheInterceptor)
-  @CacheTTL(30000)
-  @Get('workouts/:workoutId')
-  getWorkoutLog(@Param('workoutId') workoutId: string) {
-    return this.programsService.getWorkoutLog(workoutId);
-  }
-
-  @UseInterceptors(UserScopedCacheInterceptor)
-  @CacheTTL(60000)
-  @Get('users/:userId/history')
-  getWorkoutHistory(
-    @Param('userId') userId: string,
-    @Query('limit') limit?: number,
-  ) {
-    return this.programsService.getWorkoutHistory(userId, limit ? +limit : 30);
-  }
-
   // ============================================
   // COMMENTS
   // ============================================
@@ -419,39 +373,6 @@ export class ProgramsController {
   @Get('workouts/:workoutId/comments')
   getComments(@Param('workoutId') workoutId: string) {
     return this.programsService.getWorkoutComments(workoutId);
-  }
-
-  // ============================================
-  // ANALYTICS / PROGRESS
-  // ============================================
-
-  @UseInterceptors(UserScopedCacheInterceptor)
-  @CacheTTL(60000)
-  @Get('users/:userId/exercises/:exerciseId/progress')
-  getExerciseProgress(
-    @Param('userId') userId: string,
-    @Param('exerciseId') exerciseId: string,
-    @Query('limit') limit?: number,
-  ) {
-    return this.programsService.getExerciseProgress(
-      userId,
-      exerciseId,
-      limit ? +limit : 20,
-    );
-  }
-
-  @UseInterceptors(UserScopedCacheInterceptor)
-  @CacheTTL(60000)
-  @Get('users/:userId/stats')
-  getUserStats(@Param('userId') userId: string) {
-    return this.programsService.getUserWorkoutStats(userId);
-  }
-
-  @UseInterceptors(CacheInterceptor)
-  @CacheTTL(60000)
-  @Get(':programId/progress')
-  getProgramProgress(@Param('programId') programId: string) {
-    return this.programsService.getProgramProgress(programId);
   }
 
   @UseInterceptors(CacheInterceptor)

@@ -8,9 +8,12 @@ import {
   Param,
   Query,
   UseGuards,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { UserService } from './user.service';
-import { UpdateUserDto } from './dto/user.dto';
+import { UpdateUserDto, UpdateProfileDto } from './dto/user.dto';
 import { localDateStr } from 'utils/getLocalTime';
 import { SupabaseAuthGuard } from 'utils/AuthGuard';
 
@@ -19,17 +22,33 @@ import { SupabaseAuthGuard } from 'utils/AuthGuard';
 export class UserController {
   constructor(private readonly userService: UserService) {}
 
-  @Put('user/:id/fitness-macros')
-  async updateUserFitnessMacros(
-    @Param('id') id: string,
-    @Body() fitnessMacros: UpdateUserDto,
-  ) {
-    return this.userService.updateUserFitnessMacros(id, fitnessMacros);
+  @Delete('user/:id')
+  async deleteUser(@Param('id') id: string) {
+    console.log(`Deleting user with ID: ${id}`);
+    return await this.userService.deleteUser(id);
   }
 
   @Get('user/:id')
   async getUser(@Param('id') id: string) {
     return this.userService.getUserById(id);
+  }
+
+  @Put('user/:id')
+  async updateUserProfile(
+    @Param('id') id: string,
+    @Body() body: UpdateProfileDto,
+  ) {
+    return this.userService.updateUserProfile(id, body);
+  }
+
+  @Get('user/:userId/profile')
+  async getUserProfile(@Param('userId') userId: string) {
+    const data = await this.userService.getUserProfile(userId);
+    if (!data) {
+      throw new Error('User profile not found');
+    }
+
+    return data;
   }
 
   @Get('dailyEntries/:id')
@@ -89,5 +108,20 @@ export class UserController {
     @Body('weight') weight: number,
   ) {
     return this.userService.addWeightEntry(id, weight);
+  }
+
+  @Get('body-photos/:userId')
+  async getBodyPhotos(@Param('userId') userId: string) {
+    return this.userService.getBodyPhotos(userId);
+  }
+
+  @Post('body-photos/:userId')
+  @UseInterceptors(FileInterceptor('file'))
+  async addBodyPhoto(
+    @Param('userId') userId: string,
+    @UploadedFile() file: Express.Multer.File,
+    @Body('slot') slot?: string,
+  ) {
+    return this.userService.addBodyPhoto(userId, file, slot);
   }
 }
