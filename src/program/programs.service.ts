@@ -82,6 +82,7 @@ interface LogWorkoutDto {
   program_day_id: string;
   workout_id: string;
   workout_date: string;
+  coach_id: string;
 }
 
 interface LogExerciseDto {
@@ -565,6 +566,7 @@ export class ProgramsService {
     const { data, error } = await this.supabase
       .from('workout_logs')
       .insert({
+        coach_id: dto.coach_id,
         program_day_id: dto.program_day_id,
         user_workout_program_id: dto.workout_id,
         workout_date: workoutDate,

@@ -7,7 +7,7 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { CacheTTL } from '@nestjs/cache-manager';
+import { CacheInterceptor, CacheTTL } from '@nestjs/cache-manager';
 
 import { WorkoutHistoryService } from './workoutHistory.service';
 import { SupabaseAuthGuard } from 'utils/AuthGuard';
@@ -68,8 +68,8 @@ export class WorkoutHistoryController {
     return this.workoutHistoryService.getWeekStatus(req.user.id, weekStart);
   }
 
-  @UseInterceptors(UserScopedCacheInterceptor)
-  @CacheTTL(60000)
+  @UseInterceptors(CacheInterceptor)
+  @CacheTTL(10000)
   @Get('coach-feed/:coachId')
   async getCoachFeedLogs(@Param('coachId') coachId: string) {
     return this.workoutHistoryService.getRecentCoachLogs(coachId);

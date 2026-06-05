@@ -248,6 +248,9 @@ export class LogWorkoutDto {
 
   @IsDateString()
   workout_date: string;
+
+  @IsString()
+  coach_id: string;
 }
 
 export class ExerciseSetDto {
