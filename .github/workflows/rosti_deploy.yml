@@ -24,7 +24,8 @@ jobs:
           ssh-private-key: ${{ secrets.ROSTI_DEPLOY_SSH_KEY }}
       - name: Setup hostkey
         run: |
-          echo "[$HOST]:$PORT ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC04eYVQ+4N0uVt+MUPx44s7TOrRP8zYfo0ocEGPiqplSGMTVmBHrjybWwR3PKoWTDNVrgWJJNtvj7m58uWr6Aa14mUNjBuFZg4RcGBZmVfoUz+Li1lBmhiLN9qK0u6RKcI8+te7uBQnsRQhukBi0AY4jP3AtgLD0FNtPh85bfpbuHk07S9pBhlAav2vjUgyguvStqHjuaZwL1fFjJ9v1Gbtet+qwdK3/nf03itfpM9z+fo8qmbt6tCawsRp6gQUeYk/nW6LVeNEyxzR+dNCnHuYBUIla0aGmj1b86CU5yxg7fsacPsAvd3iqdfz+3Yz316EM2fTExNFS6CHLGeM091" > ./known_hosts      - name: env
+          echo "[$HOST]:$PORT ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC04eYVQ+4N0uVt+MUPx44s7TOrRP8zYfo0ocEGPiqplSGMTVmBHrjybWwR3PKoWTDNVrgWJJNtvj7m58uWr6Aa14mUNjBuFZg4RcGBZmVfoUz+Li1lBmhiLN9qK0u6RKcI8+te7uBQnsRQhukBi0AY4jP3AtgLD0FNtPh85bfpbuHk07S9pBhlAav2vjUgyguvStqHjuaZwL1fFjJ9v1Gbtet+qwdK3/nf03itfpM9z+fo8qmbt6tCawsRp6gQUeYk/nW6LVeNEyxzR+dNCnHuYBUIla0aGmj1b86CU5yxg7fsacPsAvd3iqdfz+3Yz316EM2fTExNFS6CHLGeM091" > ./known_hosts      
+      - name: env
         run: |
           cat << EOF > .env
           ${{ secrets.ENV }}
