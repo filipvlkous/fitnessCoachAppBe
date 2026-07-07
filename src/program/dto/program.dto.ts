@@ -157,8 +157,10 @@ export class UpdateProgramDto {
 // ============================================
 
 export class AddExerciseDto {
+  // Optional: the server always uses the day ID from the route param.
   @IsString()
-  program_day_id: string;
+  @IsOptional()
+  program_day_id?: string;
 
   @IsString()
   exercise_id: string;
@@ -186,6 +188,22 @@ export class AddExerciseDto {
   @IsString()
   @IsOptional()
   notes?: string;
+}
+
+export class AddExercisesDto {
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AddExerciseDto)
+  exercises: AddExerciseDto[];
+
+  @IsString()
+  @IsOptional()
+  userId?: string;
+}
+
+export class UpdateDayNameDto {
+  @IsString()
+  day_name: string;
 }
 
 export class UpdateExerciseDto {

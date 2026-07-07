@@ -61,7 +61,7 @@ export class MacrosService {
 
     if (error) throw new Error(`Error setting macros: ${error.message}`);
 
-    this.notificationsService.sendToUser(userId, {
+    this.notificationsService.notifyUser(userId, {
       title: 'Macros Updated',
       body: `Your macros for ${getDayName(day)} have been updated.`,
     });
@@ -69,33 +69,32 @@ export class MacrosService {
   }
 
   async getDailyMacros(userId: string, date: string) {
-    try {
-      // Use Prague timezone for 'today'
+    // Half-open range [date, date + 1 day) so no second of the day is missed.
+    const nextDay = new Date(`${date}T00:00:00Z`);
+    nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+    const nextDayStr = nextDay.toISOString().slice(0, 10);
 
-      const { data, error } = await this.supabaseService.supabase
-        .from('meals')
-        .select('total_calories, total_carbs, total_fat, total_protein')
-        .eq('user_id', userId)
-        .gte('meal_time', `${date} 00:00:00+00`)
-        .lt('meal_time', `${date} 23:59:59+00`);
+    const { data, error } = await this.supabaseService.supabase
+      .from('meals')
+      .select('total_calories, total_carbs, total_fat, total_protein')
+      .eq('user_id', userId)
+      .gte('meal_time', `${date} 00:00:00+00`)
+      .lt('meal_time', `${nextDayStr} 00:00:00+00`);
 
-      if (error) {
-        throw new Error(`Error fetching daily macros: ${error.message}`);
-      }
-
-      const totals = (data || []).reduce(
-        (acc, meal) => ({
-          total_calories: acc.total_calories + (meal.total_calories || 0),
-          total_carbs: acc.total_carbs + (meal.total_carbs || 0),
-          total_fat: acc.total_fat + (meal.total_fat || 0),
-          total_protein: acc.total_protein + (meal.total_protein || 0),
-        }),
-        { total_calories: 0, total_carbs: 0, total_fat: 0, total_protein: 0 },
-      );
-
-      return totals;
-    } catch (error: any) {
+    if (error) {
       throw new Error(`Error fetching daily macros: ${error.message}`);
     }
+
+    const totals = (data || []).reduce(
+      (acc, meal) => ({
+        total_calories: acc.total_calories + (meal.total_calories || 0),
+        total_carbs: acc.total_carbs + (meal.total_carbs || 0),
+        total_fat: acc.total_fat + (meal.total_fat || 0),
+        total_protein: acc.total_protein + (meal.total_protein || 0),
+      }),
+      { total_calories: 0, total_carbs: 0, total_fat: 0, total_protein: 0 },
+    );
+
+    return totals;
   }
 }

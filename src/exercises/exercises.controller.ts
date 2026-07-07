@@ -8,6 +8,7 @@ import {
   Delete,
   Put,
   Query,
+  Req,
   UseInterceptors,
   UploadedFiles,
   BadRequestException,
@@ -16,11 +17,17 @@ import {
 } from '@nestjs/common';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { CACHE_MANAGER, CacheTTL } from '@nestjs/cache-manager';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import * as CacheManagerTypes from 'cache-manager';
 import { ExercisesService } from './exercises.service';
-import { CreateExerciseDto, UpdateExerciseDto } from './dto/exercises.dto';
+import {
+  CreateExerciseDto,
+  UpdateExerciseCatalogDto,
+} from './dto/exercises.dto';
 import { SupabaseAuthGuard } from 'utils/AuthGuard';
 import { UserScopedCacheInterceptor } from 'utils/user-cache.interceptor';
+import { AccessService } from 'src/auth/access.service';
+import * as authReq from 'utils/authenticated-request.interface';
 
 interface UploadedFile {
   buffer: Buffer;
@@ -34,16 +41,24 @@ interface UploadedFiles {
   video?: UploadedFile[];
 }
 
+@ApiTags('exercises')
+@ApiBearerAuth()
 @Controller('exercises')
 @UseGuards(SupabaseAuthGuard)
 export class ExercisesController {
   constructor(
     private exercisesService: ExercisesService,
+    private accessService: AccessService,
     @Inject(CACHE_MANAGER) private cacheManager: CacheManagerTypes.Cache,
   ) {}
 
+  // The exercise catalogue is shared, so only coaches may modify it.
   @Post('create')
-  async create(@Body() dto: CreateExerciseDto) {
+  async create(
+    @Body() dto: CreateExerciseDto,
+    @Req() req: authReq.AuthenticatedRequest,
+  ) {
+    await this.accessService.assertCoachRole(req.user.id);
     const result = await this.exercisesService.create(dto);
     await this.cacheManager.del('/exercises');
     return result;
@@ -64,7 +79,12 @@ export class ExercisesController {
   }
 
   @Put(':id')
-  async update(@Param('id') id: string, @Body() dto: UpdateExerciseDto) {
+  async update(
+    @Param('id') id: string,
+    @Body() dto: UpdateExerciseCatalogDto,
+    @Req() req: authReq.AuthenticatedRequest,
+  ) {
+    await this.accessService.assertCoachRole(req.user.id);
     await this.exercisesService.update(id, dto);
 
     // Delete both possible key patterns to be safe
@@ -73,7 +93,11 @@ export class ExercisesController {
   }
 
   @Delete(':id')
-  async remove(@Param('id') id: string) {
+  async remove(
+    @Param('id') id: string,
+    @Req() req: authReq.AuthenticatedRequest,
+  ) {
+    await this.accessService.assertCoachRole(req.user.id);
     const result = await this.exercisesService.remove(id);
     await this.cacheManager.del(`/exercises/${id}`);
     await this.cacheManager.del(`/exercises/${id}/media`);
@@ -94,8 +118,10 @@ export class ExercisesController {
   @Delete(':id/media')
   async deleteMedia(
     @Param('id') id: string,
+    @Req() req: authReq.AuthenticatedRequest,
     @Query('type') type: 'image' | 'video' | 'both' = 'both',
   ) {
+    await this.accessService.assertCoachRole(req.user.id);
     const result = await this.exercisesService.deleteMedia(id, type);
     await this.cacheManager.del(`/exercises/${id}/media`);
     await this.cacheManager.del(`/exercises/${id}`);
@@ -113,7 +139,9 @@ export class ExercisesController {
     @Param('exerciseId') exerciseId: string,
     @UploadedFiles()
     files: UploadedFiles,
+    @Req() req: authReq.AuthenticatedRequest,
   ) {
+    await this.accessService.assertCoachRole(req.user.id);
     if (!files.image && !files.video) {
       throw new BadRequestException(
         'At least one file (image or video) must be provided',

@@ -14,7 +14,7 @@ export class CreateExerciseDto {
   description?: string;
 }
 
-export class UpdateExerciseDto {
+export class UpdateExerciseCatalogDto {
   @IsString()
   name?: string;
 

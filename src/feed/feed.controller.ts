@@ -1,7 +1,12 @@
-import { Controller, Get, Param } from '@nestjs/common';
+import { Controller, Get, Param, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { FeedService } from './feed.service';
+import { SupabaseAuthGuard } from 'utils/AuthGuard';
 
+@ApiTags('feed')
+@ApiBearerAuth()
 @Controller('feed')
+@UseGuards(SupabaseAuthGuard)
 export class FeedController {
   constructor(private readonly feedService: FeedService) {}
 

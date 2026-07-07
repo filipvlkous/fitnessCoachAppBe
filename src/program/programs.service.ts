@@ -59,7 +59,7 @@ interface UpdateProgramDayDto {
 }
 
 interface AddExerciseDto {
-  program_day_id: string;
+  program_day_id?: string;
   exercise_id: string;
   planned_sets: number;
   planned_reps: number;
@@ -213,22 +213,33 @@ export class ProgramsService {
       .select()
       .single();
 
-    if (error) throw new Error(error.message);
+    if (error) throw new InternalServerErrorException(error.message);
     return data;
   }
 
-  // Delete program
+  // Delete program (returns owner IDs so the controller can invalidate their caches)
   async deleteProgram(programId: string) {
+    const { data: program } = await this.supabase
+      .from('user_workout_programs')
+      .select('user_id, coach_id')
+      .eq('id', programId)
+      .maybeSingle();
+
     const { error } = await this.supabase
       .from('user_workout_programs')
       .delete()
       .eq('id', programId);
 
-    if (error) throw new Error(error.message);
-    return { message: 'Program deleted successfully' };
+    if (error) throw new InternalServerErrorException(error.message);
+    return {
+      message: 'Program deleted successfully',
+      user_id: program?.user_id ?? null,
+      coach_id: program?.coach_id ?? null,
+    };
   }
 
-  // Get user's active program
+  // Get user's active program.
+  // Uses limit(1) + maybeSingle so duplicate active programs don't error out.
   async getUserActiveProgram(userId: string) {
     const { data, error } = await this.supabase
       .from('user_workout_programs')
@@ -245,15 +256,14 @@ export class ProgramsService {
       )
       .eq('user_id', userId)
       .eq('status', 'active')
-      .single();
+      .order('start_date', { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
     if (error) {
-      if (error.code === 'PGRST116') {
-        return {};
-      }
-      throw new NotFoundException('No active program found');
+      throw new InternalServerErrorException(error.message);
     }
-    return data;
+    return data ?? {};
   }
 
   async getUserActiveDay(programId: string, dayNumber: number) {
@@ -270,15 +280,13 @@ export class ProgramsService {
       )
       .eq('program_id', programId)
       .eq('day_number', dayNumber)
-      .single();
+      .limit(1)
+      .maybeSingle();
 
     if (error) {
-      if (error.code === 'PGRST116') {
-        return {};
-      }
-      throw new NotFoundException('No active program found');
+      throw new InternalServerErrorException(error.message);
     }
-    return data;
+    return data ?? {};
   }
 
   async getUserActiveWeek(userId: string) {
@@ -298,15 +306,14 @@ export class ProgramsService {
       )
       .eq('user_id', userId)
       .eq('status', 'active')
-      .single();
+      .order('start_date', { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
     if (error) {
-      if (error.code === 'PGRST116') {
-        return {};
-      }
-      throw new NotFoundException('No active program found');
+      throw new InternalServerErrorException(error.message);
     }
-    return data;
+    return data ?? {};
   }
 
   // ============================================
@@ -321,7 +328,7 @@ export class ProgramsService {
       .select('id')
       .single();
 
-    if (error) throw new Error(error.message);
+    if (error) throw new InternalServerErrorException(error.message);
     return { id: data.id };
   }
 
@@ -334,7 +341,7 @@ export class ProgramsService {
       .select()
       .single();
 
-    if (error) throw new Error(error.message);
+    if (error) throw new InternalServerErrorException(error.message);
     return data;
   }
 
@@ -345,7 +352,7 @@ export class ProgramsService {
       .delete()
       .eq('id', dayId);
 
-    if (error) throw new Error(error.message);
+    if (error) throw new InternalServerErrorException(error.message);
     return { message: 'Day deleted successfully' };
   }
 
@@ -369,13 +376,12 @@ export class ProgramsService {
     return data;
   }
 
-
   async updateProgramDayName(user_program_day_id: string, name: string) {
     const { data, error } = await this.supabase
       .from('user_program_days')
       .update({ day_name: name })
       .eq('id', user_program_day_id)
-
+      .select()
       .single();
 
     if (error) throw new NotFoundException('Day not found');
@@ -391,16 +397,19 @@ export class ProgramsService {
       .from('exercises')
       .select('id, name, muscle_group')
       .order('name');
-    if (error) throw new Error(error.message);
+    if (error) throw new InternalServerErrorException(error.message);
     return data;
   }
 
-  // Add exercise to a day
-  async addExerciseToDay(dto: AddExerciseDto | AddExerciseDto[], id: string) {
+  // Add exercise to a day. The day always comes from the route param so the
+  // body cannot write into another program's day.
+  async addExerciseToDay(
+    dto: AddExerciseDto | AddExerciseDto[],
+    dayId: string,
+  ) {
     const items = Array.isArray(dto) ? dto : [dto];
     const sanitized = items.map(
       ({
-        program_day_id,
         exercise_id,
         planned_sets,
         planned_reps,
@@ -409,22 +418,21 @@ export class ProgramsService {
         sort_order,
         notes,
       }) => ({
-        program_day_id,
+        program_day_id: dayId,
         exercise_id,
         planned_sets,
         planned_reps,
         planned_weight,
         rest_seconds,
-        sort_order: sort_order + 1,
+        sort_order,
         notes,
       }),
     );
     const { error } = await this.supabase
       .from('user_assigned_exercises')
-      .insert(sanitized)
-      .eq('program_day_id', id);
+      .insert(sanitized);
 
-    if (error) throw new Error(error.message);
+    if (error) throw new InternalServerErrorException(error.message);
     return true;
   }
 
@@ -448,12 +456,16 @@ export class ProgramsService {
       )
       .single();
 
-    if (error) throw new Error(error.message);
+    if (error) throw new InternalServerErrorException(error.message);
 
-    this.notificationsService.sendToUser(data.user_id, {
-      title: 'Exercise Updated',
-      body: `Your coach has updated an exercise in your program. Check it out!`,
-    });
+    // The assigned-exercise row has no user_id; resolve the athlete via the day.
+    const athleteId = await this.getAthleteIdForDay(data.program_day_id);
+    if (athleteId) {
+      this.notificationsService.notifyUser(athleteId, {
+        title: 'Exercise Updated',
+        body: `Your coach has updated an exercise in your program. Check it out!`,
+      });
+    }
 
     return data;
   }
@@ -467,12 +479,7 @@ export class ProgramsService {
       .select('program_day_id')
       .single();
 
-    if (error) throw new Error(error.message);
-
-    // this.notificationsService.sendToUser(data.user_id, {
-    //   title: 'Exercise Removed',
-    //   body: `Your coach has removed an exercise from your program. Check your updated plan!`,})
-
+    if (error) throw new InternalServerErrorException(error.message);
 
     return {
       message: 'Exercise removed successfully',
@@ -522,7 +529,7 @@ export class ProgramsService {
     );
 
     const firstError = results.find((result) => result.error)?.error;
-    if (firstError) throw new Error(firstError.message);
+    if (firstError) throw new InternalServerErrorException(firstError.message);
 
     return results.map((result) => result.data);
   }
@@ -558,7 +565,9 @@ export class ProgramsService {
       .from('workout_logs')
       .select('id')
       .eq('user_workout_program_id', dto.workout_id)
+      .eq('program_day_id', dto.program_day_id)
       .eq('workout_date', workoutDate)
+      .limit(1)
       .maybeSingle();
 
     if (existing) return existing; // { id }
@@ -575,7 +584,7 @@ export class ProgramsService {
       .select('id')
       .single();
 
-    if (error) throw new Error(error.message);
+    if (error) throw new InternalServerErrorException(error.message);
 
     return data; // { id }
   }
@@ -586,7 +595,7 @@ export class ProgramsService {
       throw new BadRequestException('No sets provided');
     }
 
-    const exerciseLogs = dto.sets.map((set, index) => ({
+    const exerciseLogs = dto.sets.map((set) => ({
       workout_log_id: dto.workout_log_id,
       assigned_exercise_id: dto.assigned_exercise_id,
       exercises_id: dto.exercises_id,
@@ -596,18 +605,17 @@ export class ProgramsService {
       note: set.note || null,
     }));
 
-    const { data, error } = await this.supabase
+    const { error } = await this.supabase
       .from('exercise_logs')
       .insert(exerciseLogs);
 
-    if (error) throw new Error(error.message);
+    if (error) throw new InternalServerErrorException(error.message);
     return true;
   }
 
   // Complete a workout
   async completeWorkout(
     workoutLogId: string,
-    program_day_id: string,
     userId: string,
     durationMinutes?: number,
   ) {
@@ -621,21 +629,22 @@ export class ProgramsService {
       .select()
       .single();
 
-    const { data: relation, error: relationError } = await this.supabase
+    if (error) throw new InternalServerErrorException(error.message);
+
+    // Notify the coach (if any); a missing coach or push failure must not
+    // fail the completed workout.
+    const { data: relation } = await this.supabase
       .from('coach_user_relations')
       .select('coach_id')
       .eq('user_id', userId)
-      .single();
+      .eq('status', 'approved')
+      .limit(1)
+      .maybeSingle();
 
-    if (relationError || !relation) {
-      console.error('No coach found for user:', relationError);
-      return;
-    }
-
-    if (relation.coach_id) {
-      this.notificationsService.sendToUser(relation.coach_id, {
+    if (relation?.coach_id) {
+      this.notificationsService.notifyUser(relation.coach_id, {
         title: 'Workout Completed!',
-        body: `Great job on completing your workout! You can review your performance and keep up the good work!`,
+        body: 'One of your clients just completed a workout. Check their performance!',
         data: {
           type: 'workout_completed',
           userId,
@@ -643,10 +652,8 @@ export class ProgramsService {
       });
     }
 
-    if (error) throw new Error(error.message);
     return data;
   }
-
 
   // ============================================
   // COMMENTS
@@ -670,7 +677,7 @@ export class ProgramsService {
       .select()
       .single();
 
-    if (error) throw new Error(error.message);
+    if (error) throw new InternalServerErrorException(error.message);
     return data;
   }
 
@@ -690,10 +697,9 @@ export class ProgramsService {
       .eq('workout_log_id', workoutLogId)
       .order('created_at', { ascending: true });
 
-    if (error) throw new Error(error.message);
+    if (error) throw new InternalServerErrorException(error.message);
     return data;
   }
-
 
   async logCardio(dto: {
     workout_log_id: string;

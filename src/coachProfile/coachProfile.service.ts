@@ -7,8 +7,6 @@ import { SupabaseService } from 'src/supabase/supabase.service';
 import { UpdateCoachProfileDto } from './dto/coachProfile.dto';
 import { SearchCoachProfilesDto } from './dto/searchCoach.dto';
 import sharp from 'sharp';
-import { ok } from 'assert';
-import { error } from 'console';
 
 export interface CoachProfile {
   id: string;
@@ -86,42 +84,44 @@ export class CoachProfileService {
   }
 
   // Used by clients discovering a coach (no auth required beyond knowing coach_id)
-async getPublicProfile(coachId: string): Promise<Partial<CoachProfile>> {
-  // Fetch base profile
-  const { data: profileData, error: profileError } = await this.supabaseService.supabase
-    .from('coach_profiles')
-    .select(
-      'coach_id, specialty, hourly_rate, bio, gym, lat, lng, contact, price_list, user:coach_id(id, first_name, last_name, coach_code), avatar_url, gallery_images, email',
-    )
-    .eq('coach_id', coachId)
-    .single();
+  async getPublicProfile(coachId: string): Promise<Partial<CoachProfile>> {
+    // Fetch base profile
+    const { data: profileData, error: profileError } =
+      await this.supabaseService.supabase
+        .from('coach_profiles')
+        .select(
+          'coach_id, specialty, hourly_rate, bio, gym, lat, lng, contact, price_list, user:coach_id(id, first_name, last_name, coach_code), avatar_url, gallery_images, email',
+        )
+        .eq('coach_id', coachId)
+        .single();
 
-  if (profileError) {
-    if (profileError.code === 'PGRST116') {
-      throw new NotFoundException(`Coach profile not found`);
+    if (profileError) {
+      if (profileError.code === 'PGRST116') {
+        throw new NotFoundException(`Coach profile not found`);
+      }
+      throw new InternalServerErrorException(profileError.message);
     }
-    throw new InternalServerErrorException(profileError.message);
+
+    // Fetch stats from the view
+    const { data: statsData, error: statsError } =
+      await this.supabaseService.supabase
+        .from('coach_profiles_with_stats')
+        .select('avg_rating, review_count')
+        .eq('coach_id', coachId)
+        .single();
+
+    if (statsError && statsError.code !== 'PGRST116') {
+      throw new InternalServerErrorException(statsError.message);
+    }
+
+    const result = {
+      ...profileData,
+      avg_rating: statsData?.avg_rating ?? null,
+      review_count: statsData?.review_count ?? 0,
+    };
+
+    return result;
   }
-
-  // Fetch stats from the view
-  const { data: statsData, error: statsError } = await this.supabaseService.supabase
-    .from('coach_profiles_with_stats')
-    .select('avg_rating, review_count')
-    .eq('coach_id', coachId)
-    .single();
-
-  if (statsError && statsError.code !== 'PGRST116') {
-    throw new InternalServerErrorException(statsError.message);
-  }
-
-  const result = {
-    ...profileData,
-    avg_rating: statsData?.avg_rating ?? null,
-    review_count: statsData?.review_count ?? 0,
-  };
-
-  return result;
-}
 
   async searchProfiles(dto: SearchCoachProfilesDto) {
     const {
@@ -308,7 +308,6 @@ async getPublicProfile(coachId: string): Promise<Partial<CoachProfile>> {
         comment,
       });
 
-      console.log(`Review insert result:`, { error });
     if (error) {
       throw new InternalServerErrorException(error.message);
     }

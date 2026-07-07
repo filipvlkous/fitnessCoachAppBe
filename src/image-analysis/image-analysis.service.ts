@@ -17,7 +17,7 @@ export class ImageAnalysisService {
   private genAI: GoogleGenAI;
 
   constructor() {
-    this.genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) || '';
+    this.genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   }
 
   async analyzeImage(base64: string): Promise<MealAnalysis | null> {
@@ -106,7 +106,7 @@ export class ImageAnalysisService {
   }
   async getMacronutrients(
     macronutrientDto: AnalyzeFoodResponseDto,
-  ): Promise<any> {
+  ): Promise<string | undefined> {
     try {
       const generationConfig = {
         temperature: 0.1,

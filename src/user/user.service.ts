@@ -1,8 +1,13 @@
-import { Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  InternalServerErrorException,
+  NotFoundException,
+} from '@nestjs/common';
 import { NotificationsService } from 'src/notifications/notifications.service';
 import { SupabaseService } from 'src/supabase/supabase.service';
 import { UpdateProfileDto } from './dto/user.dto';
-import { localDateStr } from 'utils/getLocalTime';
 
 @Injectable()
 export class UserService {
@@ -92,9 +97,22 @@ export class UserService {
       .from('user')
       .select('id')
       .eq('coach_code', code)
-      .single();
+      .maybeSingle();
 
-    if (!data) throw new Error('Invalid code');
+    if (!data) throw new BadRequestException('Invalid code');
+
+    // Don't create duplicate requests for the same coach.
+    const { data: existing } = await this.supabaseService.supabase
+      .from('coach_user_relations')
+      .select('id')
+      .eq('coach_id', data.id)
+      .eq('user_id', userId)
+      .in('status', ['pending', 'approved'])
+      .limit(1)
+      .maybeSingle();
+
+    if (existing) return true;
+
     const { error } = await this.supabaseService.supabase
       .from('coach_user_relations')
       .insert({
@@ -104,7 +122,9 @@ export class UserService {
       });
 
     if (error) {
-      throw new Error(`Error assigning user to coach: ${error.message}`);
+      throw new InternalServerErrorException(
+        `Error assigning user to coach: ${error.message}`,
+      );
     }
     return true;
   }
@@ -134,41 +154,87 @@ export class UserService {
     return data;
   }
 
-  async approveUser(relationId: string, userId: string) {
+  private async getRelation(relationId: string) {
+    const { data, error } = await this.supabaseService.supabase
+      .from('coach_user_relations')
+      .select('id, coach_id, user_id, status')
+      .eq('id', relationId)
+      .maybeSingle();
+
+    if (error || !data) {
+      throw new NotFoundException('Relation not found');
+    }
+    return data;
+  }
+
+  async approveUser(relationId: string, requesterId: string) {
+    const relation = await this.getRelation(relationId);
+    // Only the coach on the relation can approve it.
+    if (relation.coach_id !== requesterId) {
+      throw new ForbiddenException('Only the coach can approve this request');
+    }
+
+    const userId = relation.user_id;
+
     const { error } = await this.supabaseService.supabase
       .from('coach_user_relations')
       .update({ status: 'approved' })
       .eq('id', relationId);
 
     if (error) {
-      throw new Error(`Error approving user: ${error.message}`);
+      throw new InternalServerErrorException(
+        `Error approving user: ${error.message}`,
+      );
     }
 
-    const { data, error: userError } = await this.supabaseService.supabase
+    // Only create a starter program when the user has no active one;
+    // duplicate active programs break the active-program endpoints.
+    const { data: existingActive } = await this.supabaseService.supabase
       .from('user_workout_programs')
-      .insert({
-        user_id: userId,
-        name: 'First Program',
-        start_date: new Date().toISOString().split('T')[0],
-        end_date: null,
-        status: 'active',
-        workout_streek: 0,
-      })
-      .select()
-      .single();
+      .select('id')
+      .eq('user_id', userId)
+      .eq('status', 'active')
+      .limit(1)
+      .maybeSingle();
 
-    if (userError) {
-      throw new Error(`Error approving user: ${userError.message}`);
+    let program = existingActive ?? null;
+    if (!existingActive) {
+      const { data, error: programError } = await this.supabaseService.supabase
+        .from('user_workout_programs')
+        .insert({
+          user_id: userId,
+          coach_id: relation.coach_id,
+          name: 'First Program',
+          start_date: new Date().toISOString().split('T')[0],
+          end_date: null,
+          status: 'active',
+          workout_streek: 0,
+        })
+        .select()
+        .single();
+
+      if (programError) {
+        throw new InternalServerErrorException(
+          `Error approving user: ${programError.message}`,
+        );
+      }
+      program = data;
     }
 
-    this.notificationsService.sendToUser(userId, {
+    this.notificationsService.notifyUser(userId, {
       title: 'Coach Assignment Approved',
       body: 'Your request to be assigned to the coach has been approved.',
     });
-    return data;
+    return program;
   }
 
-  async rejectUser(relationId: string) {
+  async rejectUser(relationId: string, requesterId: string) {
+    const relation = await this.getRelation(relationId);
+    // The coach can reject; the user can cancel their own request.
+    if (relation.coach_id !== requesterId && relation.user_id !== requesterId) {
+      throw new ForbiddenException('Not allowed to modify this request');
+    }
+
     const { data, error } = await this.supabaseService.supabase
       .from('coach_user_relations')
       .delete()
@@ -177,12 +243,34 @@ export class UserService {
       .single();
 
     if (error) {
-      throw new Error(`Error rejecting user: ${error.message}`);
+      throw new InternalServerErrorException(
+        `Error rejecting user: ${error.message}`,
+      );
     }
-    this.notificationsService.sendToUser(data.user_id, {
-      title: 'Coach Assignment Rejected',
-      body: 'Your request to be assigned to the coach has been rejected.',
-    });
+    if (requesterId !== data.user_id) {
+      this.notificationsService.notifyUser(data.user_id, {
+        title: 'Coach Assignment Rejected',
+        body: 'Your request to be assigned to the coach has been rejected.',
+      });
+    }
+    return data;
+  }
+
+  async removeCoachRelationByUserId(userId: string) {
+    const { data, error } = await this.supabaseService.supabase
+      .from('coach_user_relations')
+      .delete()
+      .eq('user_id', userId)
+      .select();
+
+    if (error) {
+      throw new InternalServerErrorException(
+        `Error removing coach relation: ${error.message}`,
+      );
+    }
+    if (!data || data.length === 0) {
+      throw new NotFoundException('No coach relation found for this user');
+    }
     return data;
   }
 
@@ -201,7 +289,7 @@ export class UserService {
     return data;
   }
 
-  async addWeightEntry(userId: string, weight: number, date?: string) {
+  async addWeightEntry(userId: string, weight: number) {
     const { data, error } = await this.supabaseService.supabase
       .from('user_weight')
       .insert({
@@ -219,19 +307,25 @@ export class UserService {
   }
 
   async deleteUser(userId: string) {
-    // Debug: verify user exists in auth first
+    // auth.admin requires the service-role client (anon key gets a 403).
+    const adminClient = this.supabaseService.getAdminClient();
+
     const { data: authUser, error: fetchError } =
-      await this.supabaseService.supabase.auth.admin.getUserById(userId);
+      await adminClient.auth.admin.getUserById(userId);
 
     if (fetchError || !authUser) {
-      throw new Error(`User not found in auth: ${fetchError?.message}`);
+      throw new NotFoundException(
+        `User not found in auth: ${fetchError?.message}`,
+      );
     }
 
     const { error: authError } =
-      await this.supabaseService.supabase.auth.admin.deleteUser(userId);
+      await adminClient.auth.admin.deleteUser(userId);
 
     if (authError) {
-      throw new Error(`Error deleting user from auth: ${authError.message}`);
+      throw new InternalServerErrorException(
+        `Error deleting user from auth: ${authError.message}`,
+      );
     }
 
     const { error } = await this.supabaseService.supabase
@@ -253,7 +347,8 @@ export class UserService {
     if (dto.age !== undefined) update.age = dto.age;
     if (dto.sex !== undefined) update.sex = dto.sex;
     if (dto.goal !== undefined) update.goal = dto.goal;
-    if (dto.activity_level !== undefined) update.activity_level = dto.activity_level;
+    if (dto.activity_level !== undefined)
+      update.activity_level = dto.activity_level;
     if (dto.bio !== undefined) update.bio = dto.bio;
 
     if (Object.keys(update).length === 0) {
@@ -274,19 +369,19 @@ export class UserService {
   }
 
   async getUserProfile(userId: string) {
-    console.log(`Fetching profile for user ID: ${userId}`);
     const { data, error } = await this.supabaseService.supabase
       .from('user_profile')
       .select('*')
       .eq('user_id', userId)
-      .single();
+      .maybeSingle();
 
     if (error) {
-      if (error.code === '42703') return null; // No profile found, return null
-      throw new Error(`Error fetching user profile: ${error.message}`);
+      throw new InternalServerErrorException(
+        `Error fetching user profile: ${error.message}`,
+      );
     }
 
-    return data;
+    return data; // null when no profile exists
   }
 
   async getBodyPhotos(userId: string) {
@@ -326,7 +421,7 @@ export class UserService {
       .insert({
         user_id: userId,
         url: publicUrlData.publicUrl,
-        slot: slot ? Number(slot) : null,
+        slot: slot && Number.isFinite(Number(slot)) ? Number(slot) : null,
       })
       .select()
       .single();

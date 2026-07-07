@@ -8,7 +8,8 @@
   "scripts": {
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
-    "start": "nest start",
+    "start": "node dist/src/main",
+    "start:local": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/src/main",
@@ -29,6 +30,7 @@
     "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-express": "^11.1.19",
     "@nestjs/schedule": "^6.1.1",
+    "@nestjs/swagger": "^11.4.5",
     "@supabase/supabase-js": "^2.90.1",
     "cache-manager": "^7.2.8",
     "cache-manager-redis-yet": "^5.1.5",

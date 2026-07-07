@@ -1,11 +1,9 @@
-
 import { IsDateString, IsUUID } from 'class-validator';
 
 export class WeekStatusDto {
   @IsDateString()
   weekStart: string;
 }
-
 
 export class MonthHistoryDto {
   @IsDateString()

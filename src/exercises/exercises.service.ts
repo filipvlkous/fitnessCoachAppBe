@@ -1,7 +1,10 @@
 // src/exercises/exercises.service.ts
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
-import { CreateExerciseDto, UpdateExerciseDto } from './dto/exercises.dto';
+import {
+  CreateExerciseDto,
+  UpdateExerciseCatalogDto,
+} from './dto/exercises.dto';
 import sharp from 'sharp';
 import path from 'path';
 
@@ -53,12 +56,11 @@ export class ExercisesService {
   }
 
   // Update exercise
-  async update(id: string, dto: UpdateExerciseDto) {
+  async update(id: string, dto: UpdateExerciseCatalogDto) {
     const { error } = await this.supabase
       .from('exercises')
       .update(dto)
       .eq('id', id);
-
 
     if (error) throw new Error(error.message);
   }

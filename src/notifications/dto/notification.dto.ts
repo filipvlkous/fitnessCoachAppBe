@@ -3,9 +3,14 @@ import { IsString, IsOptional, IsObject, IsArray } from 'class-validator';
 export class SavePushTokenDto {
   @IsString()
   token!: string;
-  
+
   @IsString()
   platform!: string;
+}
+
+export class DeletePushTokenDto {
+  @IsString()
+  token!: string;
 }
 
 export class SendNotificationDto {

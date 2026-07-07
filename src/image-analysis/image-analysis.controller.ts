@@ -1,10 +1,13 @@
 import {
-  BadRequestException,
   Body,
   Controller,
+  HttpException,
   InternalServerErrorException,
   Post,
+  Req,
+  UseGuards,
 } from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ImageAnalysisService } from './image-analysis.service';
 import {
   AnalyzeFoodDto,
@@ -12,10 +15,14 @@ import {
   ManualFoodEntryDto,
 } from './dto/image.dto';
 import { SupabaseService } from 'src/supabase/supabase.service';
-import { ok } from 'assert';
+import { SupabaseAuthGuard } from 'utils/AuthGuard';
 import { localDateStr } from 'utils/getLocalTime';
+import * as authReq from 'utils/authenticated-request.interface';
 
+@ApiTags('image-analysis')
+@ApiBearerAuth()
 @Controller('image-analysis')
+@UseGuards(SupabaseAuthGuard)
 export class ImageAnalysisController {
   constructor(
     private readonly imageAnalysisService: ImageAnalysisService,
@@ -24,15 +31,10 @@ export class ImageAnalysisController {
 
   @Post('food/analyze')
   async analyzeFoodImage(@Body() analyzeFoodDto: AnalyzeFoodDto) {
-    const { imageBase64 } = analyzeFoodDto;
-
     try {
-      if (!imageBase64) {
-        throw new BadRequestException('No image data provided.');
-      }
-
-      const analysisJson =
-        await this.imageAnalysisService.analyzeImage(imageBase64);
+      const analysisJson = await this.imageAnalysisService.analyzeImage(
+        analyzeFoodDto.imageBase64,
+      );
       if (!analysisJson) {
         throw new InternalServerErrorException('Failed to analyze the image.');
       }
@@ -42,7 +44,7 @@ export class ImageAnalysisController {
         message: 'Food analysis completed successfully.',
       };
     } catch (error: any) {
-      console.error(error);
+      if (error instanceof HttpException) throw error;
       throw new InternalServerErrorException(
         error?.message ?? 'Image analysis failed.',
       );
@@ -51,63 +53,64 @@ export class ImageAnalysisController {
 
   /** Manually add macros for a single food item without image analysis. */
   @Post('food/manual')
-  async addFoodManually(@Body() dto: ManualFoodEntryDto) {
-    try {
-      const foodItems = JSON.stringify({
-        foodArray: [
-          {
-            name: dto.item.name,
-            weight: dto.item.weight,
-            protein: dto.item.protein,
-            fat: dto.item.fat,
-            carbs: dto.item.carbs,
-            calories: dto.item.calories,
-            nutritionScore: 0,
-          },
-        ],
-      });
+  async addFoodManually(
+    @Body() dto: ManualFoodEntryDto,
+    @Req() req: authReq.AuthenticatedRequest,
+  ) {
+    const foodItems = JSON.stringify({
+      foodArray: [
+        {
+          name: dto.item.name,
+          weight: dto.item.weight,
+          protein: dto.item.protein,
+          fat: dto.item.fat,
+          carbs: dto.item.carbs,
+          calories: dto.item.calories,
+          nutritionScore: 0,
+        },
+      ],
+    });
 
-      await this.supabaseService.saveFoodItems(
-        foodItems,
-        dto.name,
-        dto.id,
-        dto.category,
-        localDateStr(dto.date),
-        dto.meal_score ?? 0,
-      );
+    // The meal always belongs to the authenticated user.
+    await this.supabaseService.saveFoodItems(
+      foodItems,
+      dto.name,
+      req.user.id,
+      dto.category,
+      localDateStr(dto.date),
+      dto.meal_score ?? 0,
+    );
 
-      return { message: 'Food entry saved successfully.' };
-    } catch (error: any) {
-      console.error(error);
-      throw new InternalServerErrorException(
-        error?.message ?? 'Failed to save manual food entry.',
-      );
-    }
+    return { message: 'Food entry saved successfully.' };
   }
 
   /** Store or recalculate macronutrients for the analysed food. */
   @Post('food/macronutrients')
-  async saveMacronutrients(@Body() macronutrientDto: AnalyzeFoodResponseDto) {
-    try {
-      const macronutrientData: string =
-        await this.imageAnalysisService.getMacronutrients(macronutrientDto);
+  async saveMacronutrients(
+    @Body() macronutrientDto: AnalyzeFoodResponseDto,
+    @Req() req: authReq.AuthenticatedRequest,
+  ) {
+    const macronutrientData =
+      await this.imageAnalysisService.getMacronutrients(macronutrientDto);
 
-      this.supabaseService.saveFoodItems(
-        macronutrientData,
-        macronutrientDto.name,
-        macronutrientDto.id,
-        macronutrientDto.category,
-        localDateStr(macronutrientDto.date),
-        macronutrientDto.meal_score,
+    if (!macronutrientData) {
+      throw new InternalServerErrorException(
+        'Failed to compute macronutrients.',
       );
-
-      return {
-        message: 'Macronutrient data saved successfully.',
-        macronutrientData,
-        ok,
-      };
-    } catch (error) {
-      return console.log(error);
     }
+
+    await this.supabaseService.saveFoodItems(
+      macronutrientData,
+      macronutrientDto.name,
+      req.user.id,
+      macronutrientDto.category,
+      localDateStr(macronutrientDto.date),
+      macronutrientDto.meal_score ?? 0,
+    );
+
+    return {
+      message: 'Macronutrient data saved successfully.',
+      macronutrientData,
+    };
   }
 }
