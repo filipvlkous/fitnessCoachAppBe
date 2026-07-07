@@ -139,7 +139,7 @@ export class UserController {
   ) {
     // The athlete themselves or their coach can remove the relation.
     await this.accessService.assertSelfOrCoach(req.user.id, userId);
-    return this.userService.removeCoachRelationByUserId(userId);
+    return this.userService.removeCoachRelationByUserId(userId, programId);
   }
 
   @Get('weight-history/:id')

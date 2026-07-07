@@ -256,7 +256,7 @@ export class UserService {
     return data;
   }
 
-  async removeCoachRelationByUserId(userId: string) {
+  async removeCoachRelationByUserId(userId: string, programId: string) {
     const { data, error } = await this.supabaseService.supabase
       .from('coach_user_relations')
       .delete()
@@ -271,6 +271,19 @@ export class UserService {
     if (!data || data.length === 0) {
       throw new NotFoundException('No coach relation found for this user');
     }
+
+    // Also remove the program days tied to this program.
+    const { error: daysError } = await this.supabaseService.supabase
+      .from('user_program_days')
+      .delete()
+      .eq('program_id', programId);
+
+    if (daysError) {
+      throw new InternalServerErrorException(
+        `Error removing program days: ${daysError.message}`,
+      );
+    }
+
     return data;
   }
 
