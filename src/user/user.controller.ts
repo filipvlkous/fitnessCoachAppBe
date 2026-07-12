@@ -17,7 +17,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserService } from './user.service';
-import { UpdateProfileDto } from './dto/user.dto';
+import { BecomeCoachDto, UpdateProfileDto } from './dto/user.dto';
 import { localDateStr } from 'utils/getLocalTime';
 import { SupabaseAuthGuard } from 'utils/AuthGuard';
 import { AccessService } from 'src/auth/access.service';
@@ -60,6 +60,17 @@ export class UserController {
   ) {
     await this.accessService.assertSelfOrCoach(req.user.id, id);
     return this.userService.updateUserProfile(id, body);
+  }
+
+  @Put('user/:id/setup')
+  async becomeCoach(
+    @Param('id') id: string,
+    @Body() body: BecomeCoachDto,
+    @Req() req: authReq.AuthenticatedRequest,
+  ) {
+    // Only the user themselves can switch their account to a coach role.
+    this.accessService.assertSelf(req.user.id, id);
+    return this.userService.becomeCoach(id, body);
   }
 
   @Get('user/:userId/profile')

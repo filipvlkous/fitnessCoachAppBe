@@ -5,9 +5,10 @@ import {
   InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
+import { randomBytes } from 'crypto';
 import { NotificationsService } from 'src/notifications/notifications.service';
 import { SupabaseService } from 'src/supabase/supabase.service';
-import { UpdateProfileDto } from './dto/user.dto';
+import { BecomeCoachDto, UpdateProfileDto } from './dto/user.dto';
 
 @Injectable()
 export class UserService {
@@ -351,6 +352,41 @@ export class UserService {
     }
 
     return true;
+  }
+
+  private generateCoachCode(): string {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    const bytes = randomBytes(6);
+    return Array.from(bytes, (b) => chars[b % chars.length]).join('');
+  }
+
+  async becomeCoach(userId: string, dto: BecomeCoachDto) {
+    const update: Record<string, unknown> = {
+      role: dto.role,
+      first_name: dto.first_name,
+      last_name: dto.last_name,
+    };
+    if (dto.role === 'coach') {
+      update.coach_code = this.generateCoachCode();
+    }
+
+    const { data, error } = await this.supabaseService.supabase
+      .from('user')
+      .update(update)
+      .eq('id', userId)
+      .select()
+      .maybeSingle();
+
+    if (error) {
+      throw new InternalServerErrorException(
+        `Error updating user to coach: ${error.message}`,
+      );
+    }
+    if (!data) {
+      throw new NotFoundException('User not found');
+    }
+
+    return data;
   }
 
   async updateUserProfile(userId: string, dto: UpdateProfileDto) {

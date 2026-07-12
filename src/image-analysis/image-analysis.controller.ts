@@ -6,6 +6,7 @@ import {
   Post,
   Req,
   UseGuards,
+  Get,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ImageAnalysisService } from './image-analysis.service';
@@ -112,5 +113,17 @@ export class ImageAnalysisController {
       message: 'Macronutrient data saved successfully.',
       macronutrientData,
     };
+  }
+
+  @Get('monthly-summary')
+  async getMonthlySummary(@Req() req: authReq.AuthenticatedRequest) {
+    try {
+      const data = await this.supabaseService.fetchData('food_entries');
+      return { data, message: 'Monthly summary fetched successfully.' };
+    } catch (error: any) {
+      throw new InternalServerErrorException(
+        error?.message ?? 'Failed to fetch monthly summary.',
+      );
+    }
   }
 }

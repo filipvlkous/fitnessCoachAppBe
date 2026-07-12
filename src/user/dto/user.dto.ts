@@ -1,4 +1,5 @@
 import {
+  IsIn,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -76,6 +77,19 @@ export class UpdateUserDto {
   activityLevel?: string;
 }
 
+export class BecomeCoachDto {
+  @IsString()
+  @IsNotEmpty({ message: 'First name is required.' })
+  first_name: string;
+
+  @IsString()
+  @IsNotEmpty({ message: 'Last name is required.' })
+  last_name: string;
+
+  @IsIn(['coach', 'user'], { message: 'Role must be either coach or user.' })
+  role: 'coach' | 'user';
+}
+
 export class UpdateProfileDto {
   @IsNumber()
   @IsOptional()
@@ -85,9 +99,9 @@ export class UpdateProfileDto {
   @IsOptional()
   height?: number;
 
-  @IsNumber()
+  @IsString()
   @IsOptional()
-  age?: number;
+  age?: string;
 
   @IsString()
   @IsOptional()
