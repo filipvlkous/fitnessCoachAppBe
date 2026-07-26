@@ -87,6 +87,22 @@ export class WorkoutHistoryController {
     return this.workoutHistoryService.getWeekStatus(req.user.id, weekStart);
   }
 
+  // Per-exercise progression for a client's month (self or their coach).
+  @UseInterceptors(UserScopedCacheInterceptor)
+  @CacheTTL(60000)
+  @Get('users/:userId/exercise-progress')
+  async getExerciseProgress(
+    @Param('userId') userId: string,
+    @Query('month') month: string,
+    @Req() req: authReq.AuthenticatedRequest,
+  ) {
+    await this.accessService.assertSelfOrCoach(req.user.id, userId);
+    return this.workoutHistoryService.getExerciseProgressForMonth(
+      userId,
+      month,
+    );
+  }
+
   // User-scoped cache: with a shared cache one coach's feed could be served
   // to another user on a cache hit, bypassing the access check.
   @UseInterceptors(UserScopedCacheInterceptor)

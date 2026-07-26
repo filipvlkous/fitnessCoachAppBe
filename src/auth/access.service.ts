@@ -67,6 +67,21 @@ export class AccessService {
     }
   }
 
+  /** Assert the requester owns the given coach workout plan (template). */
+  async assertPlanOwner(requesterId: string, planId: string): Promise<void> {
+    const { data, error } = await this.supabase
+      .from('coach_workout_plans')
+      .select('coach_id')
+      .eq('id', planId)
+      .maybeSingle();
+
+    this.failOnQueryError(error);
+    if (!data) throw new NotFoundException('Plan not found');
+    if (data.coach_id !== requesterId) {
+      throw new ForbiddenException('You do not own this plan');
+    }
+  }
+
   private async assertOwners(
     requesterId: string,
     owners: ProgramOwners | null | undefined,

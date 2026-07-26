@@ -54,13 +54,45 @@ export interface MonthlySummary {
   review: MonthReview;
 }
 
+export interface ExerciseProgressEntry {
+  date: string; // "YYYY-MM-DD"
+  weight: number;
+  reps: number;
+  sets: number;
+}
+
+export interface ExerciseProgress {
+  exercise_id: string;
+  name: string;
+  muscle_group: string;
+  // All logged sets this month had no weight -> track reps instead of kg.
+  bodyweight: boolean;
+  sessions: number;
+  entries: ExerciseProgressEntry[];
+}
+
+export interface MonthlySummaryCoach {
+  month: string;
+  previousMonth: string;
+  goal: {
+    targetSessions: number | null;
+    completedSessions: number;
+  };
+  stats: MonthStats;
+  previousStats: MonthStats;
+  weeklyActivity: { week: number; current: number; previous: number }[];
+  muscleGroups: { name: string; sets: number }[];
+  exerciseProgress: ExerciseProgress[];
+}
+
+
 interface ExerciseLogRow {
   set_number: number | null;
   weight: number | null;
   reps: number | null;
   exercises:
-    | { name: string; muscle_group: string | null }
-    | { name: string; muscle_group: string | null }[]
+    | { id: string; name: string; muscle_group: string | null }
+    | { id: string; name: string; muscle_group: string | null }[]
     | null;
 }
 
@@ -150,6 +182,38 @@ export class MonthlySummaryService {
     this.genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   }
 
+  async getMonthlySummaryCoach(
+    userId: string,
+    month: string,
+  ): Promise<MonthlySummaryCoach> {
+    const previousMonth = this.previousMonthOf(month);
+
+    const [current, previous, targetSessions] = await Promise.all([
+      this.collectMonthStats(userId, month),
+      this.collectMonthStats(userId, previousMonth),
+      this.fetchSessionGoal(userId, month),
+    ]);
+
+    return {
+      month,
+      previousMonth,
+      goal: {
+        targetSessions,
+        completedSessions: current.stats.workouts.completedWorkouts,
+      },
+      stats: this.toMonthStats(current.stats),
+      previousStats: this.toMonthStats(previous.stats),
+      weeklyActivity: this.pairWeeklyActivity(
+        current.stats.weeklyWorkouts,
+        previous.stats.weeklyWorkouts,
+      ),
+      muscleGroups: Object.entries(current.stats.workouts.setsPerMuscleGroup)
+        .map(([name, sets]) => ({ name, sets }))
+        .sort((a, b) => b.sets - a.sets),
+      exerciseProgress: this.buildExerciseProgress(current.workoutRows),
+    };
+  }
+
   async getMonthlySummary(
     userId: string,
     month: string,
@@ -165,8 +229,8 @@ export class MonthlySummaryService {
       ],
     );
 
-    const currentEmpty = this.isEmptyMonth(current);
-    const previousEmpty = this.isEmptyMonth(previous);
+    const currentEmpty = this.isEmptyMonth(current.stats);
+    const previousEmpty = this.isEmptyMonth(previous.stats);
 
     const review =
       storedReview ??
@@ -174,9 +238,9 @@ export class MonthlySummaryService {
         ? this.emptyReview(month)
         : await this.generateCurrentReview(
             month,
-            current,
+            current.stats,
             previousMonth,
-            previousEmpty ? null : previous,
+            previousEmpty ? null : previous.stats,
           ));
 
     // A closed month's data no longer changes, so its review is generated
@@ -190,15 +254,15 @@ export class MonthlySummaryService {
       previousMonth,
       goal: {
         targetSessions,
-        completedSessions: current.workouts.completedWorkouts,
+        completedSessions: current.stats.workouts.completedWorkouts,
       },
-      stats: this.toMonthStats(current),
-      previousStats: this.toMonthStats(previous),
+      stats: this.toMonthStats(current.stats),
+      previousStats: this.toMonthStats(previous.stats),
       weeklyActivity: this.pairWeeklyActivity(
-        current.weeklyWorkouts,
-        previous.weeklyWorkouts,
+        current.stats.weeklyWorkouts,
+        previous.stats.weeklyWorkouts,
       ),
-      muscleGroups: Object.entries(current.workouts.setsPerMuscleGroup)
+      muscleGroups: Object.entries(current.stats.workouts.setsPerMuscleGroup)
         .map(([name, sets]) => ({ name, sets }))
         .sort((a, b) => b.sets - a.sets),
       review,
@@ -266,10 +330,14 @@ export class MonthlySummaryService {
     }
   }
 
+  // Returns the aggregated stats plus the raw workout rows so callers can
+  // derive more from the same fetch (e.g. per-exercise progression) without
+  // a second query. Keep the raw rows OUT of CollectedMonth: that object is
+  // JSON-stringified into the Gemini review prompt.
   private async collectMonthStats(
     userId: string,
     month: string,
-  ): Promise<CollectedMonth> {
+  ): Promise<{ stats: CollectedMonth; workoutRows: WorkoutLogRow[] }> {
     const { start, end, daysInMonth } = this.monthRange(month);
 
     const [
@@ -287,7 +355,7 @@ export class MonthlySummaryService {
           duration_minutes,
           user_workout_programs!inner ( user_id ),
           user_program_days ( day_name ),
-          exercise_logs ( set_number, weight, reps, exercises ( name, muscle_group ) ),
+          exercise_logs ( set_number, weight, reps, exercises ( id, name, muscle_group ) ),
           cardio_logs ( cardio_type, duration_minutes, distance_km, intensity )
         `,
         )
@@ -325,14 +393,17 @@ export class MonthlySummaryService {
     const workoutDates = workoutRows.map((log) => log.workout_date);
 
     return {
-      daysInMonth,
-      workouts: this.aggregateWorkouts(workoutRows, workoutDates),
-      weeklyWorkouts: this.workoutsPerWeek(workoutDates, daysInMonth),
-      cardio: this.aggregateCardio(workoutRows),
-      nutrition: this.aggregateNutrition(
-        (meals ?? []) as MealRow[],
-        (assignedMacros ?? []) as AssignedMacroRow[],
-      ),
+      stats: {
+        daysInMonth,
+        workouts: this.aggregateWorkouts(workoutRows, workoutDates),
+        weeklyWorkouts: this.workoutsPerWeek(workoutDates, daysInMonth),
+        cardio: this.aggregateCardio(workoutRows),
+        nutrition: this.aggregateNutrition(
+          (meals ?? []) as MealRow[],
+          (assignedMacros ?? []) as AssignedMacroRow[],
+        ),
+      },
+      workoutRows,
     };
   }
 
@@ -400,6 +471,104 @@ export class MonthlySummaryService {
       totalVolumeKg: Math.round(totalVolumeKg),
       setsPerMuscleGroup,
     };
+  }
+
+  // Per-exercise progression built from the workout rows the month stats
+  // already fetched: exercise -> per-day best set. "Best" = heaviest weight,
+  // tie-broken by reps; for bodyweight exercises (all weights 0/null) it
+  // falls back to most reps. Mirrors the standalone
+  // /workoutHistory/users/:userId/exercise-progress endpoint.
+  private buildExerciseProgress(
+    workoutRows: WorkoutLogRow[],
+  ): ExerciseProgress[] {
+    const byExercise = new Map<
+      string,
+      {
+        exercise_id: string;
+        name: string;
+        muscle_group: string;
+        days: Map<
+          string,
+          {
+            date: string;
+            bestWeight: number;
+            bestReps: number; // reps of the best set (weight tie-break)
+            topReps: number; // most reps in any set (bodyweight metric)
+            sets: number;
+          }
+        >;
+      }
+    >();
+
+    for (const log of workoutRows) {
+      const date = log.workout_date?.split('T')[0];
+      if (!date) continue;
+
+      for (const set of log.exercise_logs ?? []) {
+        const ex = one(set.exercises);
+        if (!ex?.id) continue;
+
+        let entry = byExercise.get(ex.id);
+        if (!entry) {
+          entry = {
+            exercise_id: ex.id,
+            name: ex.name,
+            muscle_group: ex.muscle_group ?? 'unknown',
+            days: new Map(),
+          };
+          byExercise.set(ex.id, entry);
+        }
+
+        const weight = set.weight ?? 0;
+        const reps = set.reps ?? 0;
+
+        const day = entry.days.get(date);
+        if (!day) {
+          entry.days.set(date, {
+            date,
+            bestWeight: weight,
+            bestReps: reps,
+            topReps: reps,
+            sets: 1,
+          });
+        } else {
+          day.sets += 1;
+          day.topReps = Math.max(day.topReps, reps);
+          // Heaviest set wins; equal weight -> more reps wins.
+          if (
+            weight > day.bestWeight ||
+            (weight === day.bestWeight && reps > day.bestReps)
+          ) {
+            day.bestWeight = weight;
+            day.bestReps = reps;
+          }
+        }
+      }
+    }
+
+    return [...byExercise.values()]
+      .map((entry) => {
+        const days = [...entry.days.values()].sort((a, b) =>
+          a.date.localeCompare(b.date),
+        );
+        const bodyweight = days.every((d) => d.bestWeight === 0);
+        const entries = days.map((d) => ({
+          date: d.date,
+          weight: d.bestWeight,
+          reps: bodyweight ? d.topReps : d.bestReps,
+          sets: d.sets,
+        }));
+        return {
+          exercise_id: entry.exercise_id,
+          name: entry.name,
+          muscle_group: entry.muscle_group,
+          bodyweight,
+          sessions: entries.length,
+          entries,
+        };
+      })
+      // Most-trained first.
+      .sort((a, b) => b.sessions - a.sessions);
   }
 
   // Longest run of consecutive calendar days with at least one workout.
@@ -615,10 +784,21 @@ export class MonthlySummaryService {
       ? `PREVIOUS MONTH (${previousMonth}) DATA FOR COMPARISON: ${JSON.stringify(previousStats)}`
       : 'PREVIOUS MONTH: no data was logged.';
 
+    // The running month has only partial data — tell the model, otherwise it
+    // reviews 3 weeks of work as a weak "full month".
+    const isInProgress = !this.isClosedMonth(month);
+    const elapsedDays = isInProgress
+      ? Math.min(stats.daysInMonth, new Date().getUTCDate())
+      : stats.daysInMonth;
+    const progressBlock = isInProgress
+      ? `IMPORTANT: This month is STILL IN PROGRESS — only ${elapsedDays} of ${stats.daysInMonth} days have passed. Treat this as a mid-month check-in: judge pace and weekly averages, never criticize totals for being lower than a completed month. When comparing with the previous month, compare per-week rates instead of absolute totals. Focus points apply to the REST of this month.`
+      : '';
+
     return this.callGemini<MonthReview>(
       responseSchema,
       `
       MONTH: ${month} (${stats.daysInMonth} days)
+      ${progressBlock}
       DATA: ${JSON.stringify(stats)}
       ${previousBlock}
 

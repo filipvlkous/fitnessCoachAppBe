@@ -15,9 +15,32 @@ export interface MealAnalysis {
 @Injectable()
 export class ImageAnalysisService {
   private genAI: GoogleGenAI;
+  private readonly MAX_RETRIES = 5;
+  private readonly INITIAL_DELAY_MS = 5000;
 
   constructor() {
     this.genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  }
+
+  private async retryWithExponentialBackoff<T>(
+    fn: () => Promise<T>,
+    retries = 0,
+  ): Promise<T> {
+    try {
+      return await fn();
+    } catch (error: any) {
+      if (retries >= this.MAX_RETRIES) {
+        throw error;
+      }
+
+      const delayMs = this.INITIAL_DELAY_MS * Math.pow(2, retries);
+      console.warn(
+        `API call failed, retrying in ${delayMs}ms (attempt ${retries + 1}/${this.MAX_RETRIES})`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+
+      return this.retryWithExponentialBackoff(fn, retries + 1);
+    }
   }
 
   async analyzeImage(base64: string): Promise<MealAnalysis | null> {
@@ -89,15 +112,16 @@ export class ImageAnalysisService {
         },
       ];
 
-      const response = await this.genAI.models.generateContent({
-        model: 'gemini-3-flash-preview', // Ensure this matches your intended model
-        contents: contents,
-        config: generationConfig,
-      });
+      const response = await this.retryWithExponentialBackoff(() =>
+        this.genAI.models.generateContent({
+          model: 'gemini-3-flash-preview',
+          contents: contents,
+          config: generationConfig,
+        }),
+      );
 
       if (!response || !response.text) return null;
 
-      // 5. Parse the guaranteed JSON string into your TypeScript interface
       return JSON.parse(response.text) as MealAnalysis;
     } catch (error: any) {
       console.error('Image analysis failed:', error);
@@ -143,20 +167,22 @@ export class ImageAnalysisService {
         },
       };
 
-      const response = await this.genAI.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        config: generationConfig,
-        contents: `
-          INPUT: ${JSON.stringify(macronutrientDto.items)}
-          
-          TASK: You are an expert nutrition database. For every food item in the input array, estimate its standard macronutrients (protein, fat, carbs) and calories.
-          
-          RULES:
-          - Values must be based on the provided 'weight' in grams.
-          - Values must align with the provided 'nutritionScore'.
-          - Provide realistic estimates per ONE piece.
-        `,
-      });
+      const response = await this.retryWithExponentialBackoff(() =>
+        this.genAI.models.generateContent({
+          model: 'gemini-3-flash-preview',
+          config: generationConfig,
+          contents: `
+            INPUT: ${JSON.stringify(macronutrientDto.items)}
+
+            TASK: You are an expert nutrition database. For every food item in the input array, estimate its standard macronutrients (protein, fat, carbs) and calories.
+
+            RULES:
+            - Values must be based on the provided 'weight' in grams.
+            - Values must align with the provided 'nutritionScore'.
+            - Provide realistic estimates per ONE piece.
+          `,
+        }),
+      );
 
       if (!response || !response.text) return;
 

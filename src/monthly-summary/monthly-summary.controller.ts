@@ -14,6 +14,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import * as CacheManagerTypes from 'cache-manager';
 import {
   MonthlySummary,
+  MonthlySummaryCoach,
   MonthlySummaryService,
 } from './monthly-summary.service';
 import { MonthlySummaryQueryDto } from './dto/monthly-summary.dto';
@@ -53,6 +54,42 @@ export class MonthlySummaryController {
 
     try {
       const data = await this.monthlySummaryService.getMonthlySummary(
+        userId,
+        query.month,
+      );
+
+      // AI calls are slow and paid; keep the generated summary for 12 hours.
+      await this.cacheManager.set(cacheKey, data, 12 * 60 * 60 * 1000);
+
+      return { data, message: 'Monthly summary generated successfully.' };
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      throw new InternalServerErrorException(
+        error instanceof Error
+          ? error.message
+          : 'Failed to generate monthly summary.',
+      );
+    }
+  }
+
+    @Get('coach/:userId')
+    async getMonthlySummaryCoach(
+    @Param('userId') userId: string,
+    @Query() query: MonthlySummaryQueryDto,
+    @Req() req: authReq.AuthenticatedRequest,
+  ) {
+    // await this.accessService.assertSelfOrCoach(req.user.id, userId);
+
+    // Own key prefix: the user endpoint caches a different shape (with the
+    // AI review) under `monthly-summary:`; sharing it would poison both.
+    const cacheKey = `monthly-summary:coach:${userId}:${query.month}`;
+    const cached = await this.cacheManager.get<MonthlySummaryCoach>(cacheKey);
+    if (cached) {
+      return { data: cached, message: 'Monthly summary fetched successfully.' };
+    }
+
+    try {
+      const data = await this.monthlySummaryService.getMonthlySummaryCoach(
         userId,
         query.month,
       );

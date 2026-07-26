@@ -155,7 +155,7 @@ export class WorkoutHistoryService {
     completed,
     program_day_id,
     user_workout_programs!inner(user_id),
-    user_program_days!inner(
+    user_program_days(
       day_name,
       user_assigned_exercises(id)
     ),
@@ -193,6 +193,136 @@ export class WorkoutHistoryService {
         day_name: programDay?.day_name ?? null,
       };
     });
+  }
+
+  // Per-exercise progression for a single month. One aggregate query over
+  // exercise_logs joined to workout_logs, grouped in JS into: exercise ->
+  // per-day best set. "Best" = heaviest weight, tie-broken by reps; for
+  // bodyweight exercises (all weights 0/null) it falls back to most reps.
+  async getExerciseProgressForMonth(userId: string, month: string) {
+    // month is 'YYYY-MM'
+    const [year, m] = month.split('-').map(Number);
+    const start = localDateStr(new Date(year, m - 1, 1));
+    const end = localDateStr(new Date(year, m, 1)); // exclusive
+
+    const { data, error } = await this.supabaseService.supabase
+      .from('exercise_logs')
+      .select(
+        `
+        weight,
+        reps,
+        set_number,
+        exercises_id,
+        exercises ( id, name, muscle_group ),
+        workout_logs!inner (
+          workout_date,
+          user_workout_programs!inner ( user_id )
+        )
+      `,
+      )
+      .eq('workout_logs.user_workout_programs.user_id', userId)
+      .gte('workout_logs.workout_date', start)
+      .lt('workout_logs.workout_date', end);
+
+    if (error) {
+      console.error('Error fetching exercise progress:', error);
+      throw error;
+    }
+
+    type Row = {
+      weight: number | null;
+      reps: number | null;
+      set_number: number | null;
+      exercises_id: string;
+      exercises: { id: string; name: string; muscle_group: string } | null;
+      workout_logs: { workout_date: string } | null;
+    };
+
+    // exercise_id -> { meta, days: date -> aggregated day }
+    const byExercise = new Map<
+      string,
+      {
+        exercise_id: string;
+        name: string;
+        muscle_group: string;
+        days: Map<
+          string,
+          {
+            date: string;
+            bestWeight: number;
+            bestReps: number; // reps of the best set (weight tie-break)
+            topReps: number; // most reps in any set (bodyweight metric)
+            sets: number;
+          }
+        >;
+      }
+    >();
+
+    for (const row of (data ?? []) as unknown as Row[]) {
+      const ex = row.exercises;
+      const date = row.workout_logs?.workout_date?.split('T')[0];
+      if (!ex || !date) continue;
+
+      let entry = byExercise.get(ex.id);
+      if (!entry) {
+        entry = {
+          exercise_id: ex.id,
+          name: ex.name,
+          muscle_group: ex.muscle_group,
+          days: new Map(),
+        };
+        byExercise.set(ex.id, entry);
+      }
+
+      const weight = row.weight ?? 0;
+      const reps = row.reps ?? 0;
+
+      const day = entry.days.get(date);
+      if (!day) {
+        entry.days.set(date, {
+          date,
+          bestWeight: weight,
+          bestReps: reps,
+          topReps: reps,
+          sets: 1,
+        });
+      } else {
+        day.sets += 1;
+        day.topReps = Math.max(day.topReps, reps);
+        // Heaviest set wins; equal weight -> more reps wins.
+        if (
+          weight > day.bestWeight ||
+          (weight === day.bestWeight && reps > day.bestReps)
+        ) {
+          day.bestWeight = weight;
+          day.bestReps = reps;
+        }
+      }
+    }
+
+    return [...byExercise.values()]
+      .map((entry) => {
+        const days = [...entry.days.values()].sort((a, b) =>
+          a.date.localeCompare(b.date),
+        );
+        const bodyweight = days.every((d) => d.bestWeight === 0);
+        const entries = days.map((d) => ({
+          date: d.date,
+          weight: d.bestWeight,
+          reps: bodyweight ? d.topReps : d.bestReps,
+          sets: d.sets,
+        }));
+        return {
+          exercise_id: entry.exercise_id,
+          name: entry.name,
+          muscle_group: entry.muscle_group,
+          bodyweight,
+          sessions: entries.length,
+          entries,
+        };
+      })
+      // Most-trained first.
+      .sort((a, b) => b.sessions - a.sessions);
   }
 
   getRecentCoachLogs = async (coachId: string) => {
