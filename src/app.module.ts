@@ -24,7 +24,12 @@ import { CoachPlansModule } from './coach-plans/coach-plans.module';
     CacheModule.registerAsync({
       isGlobal: true,
       useFactory: async () => {
-        const redisUrl = new URL(process.env.UPSTASH_REDIS_URL!);
+        if (!process.env.UPSTASH_REDIS_URL) {
+          throw new Error(
+            'UPSTASH_REDIS_URL is not set. Configure it in the server environment.',
+          );
+        }
+        const redisUrl = new URL(process.env.UPSTASH_REDIS_URL);
         const store = await redisStore({
           password: redisUrl.password,
           socket: {
