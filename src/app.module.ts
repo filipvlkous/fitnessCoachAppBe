@@ -18,6 +18,7 @@ import { MacrosModule } from './macros/macros.module';
 import { CoachProfileModule } from './coachProfile/coachProfile.module';
 import { MonthlySummaryModule } from './monthly-summary/monthly-summary.module';
 import { CoachPlansModule } from './coach-plans/coach-plans.module';
+import { ChatModule } from './chat/chat.module';
 
 @Module({
   imports: [
@@ -66,6 +67,7 @@ import { CoachPlansModule } from './coach-plans/coach-plans.module';
     CoachProfileModule,
     MonthlySummaryModule,
     CoachPlansModule,
+    ChatModule,
   ],
   controllers: [AppController],
   providers: [AppService],
