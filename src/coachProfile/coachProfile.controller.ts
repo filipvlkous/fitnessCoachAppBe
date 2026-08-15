@@ -35,6 +35,10 @@ import {
   userCacheKey,
 } from 'utils/user-cache.interceptor';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
+import { AccessService } from 'src/auth/access.service';
+import { UserService } from 'src/user/user.service';
+import { AccessRequestService } from 'src/user/access-request.service';
+import { CreateAccessRequestDto } from 'src/user/dto/access-request.dto';
 import * as authReq from 'utils/authenticated-request.interface';
 
 @ApiTags('coaches')
@@ -44,6 +48,9 @@ import * as authReq from 'utils/authenticated-request.interface';
 export class CoachProfileController {
   constructor(
     private readonly coachProfileService: CoachProfileService,
+    private readonly accessService: AccessService,
+    private readonly userService: UserService,
+    private readonly accessRequestService: AccessRequestService,
     @Inject(CACHE_MANAGER) private cacheManager: CacheManagerTypes.Cache,
   ) {}
 
@@ -54,6 +61,61 @@ export class CoachProfileController {
       ),
       this.cacheManager.del(`/coaches/${coachId}/public-profile`),
     ]);
+  }
+
+  /**
+   * GET /coaches/client/:clientId/permissions
+   *
+   * What the requesting coach may read about one of their clients, derived from
+   * the client's own consent — never from anything the coach app sends.
+   *
+   * Not cached: a withdrawal has to take effect on the next read, and a stale
+   * "true" here is the one answer this endpoint must never give.
+   *
+   * This is what the coach UI renders against; it is not the enforcement point.
+   * Endpoints returning client data have to run the same check themselves, or
+   * the data stays one direct HTTP request away from any coach token.
+   */
+  @Get('client/:clientId/permissions')
+  async getClientPermissions(
+    @Param('clientId', ParseUUIDPipe) clientId: string,
+    @Req() req: authReq.AuthenticatedRequest,
+  ) {
+    // 403 for a coach who is not connected to this client, rather than a blank
+    // set of scopes: "you are not their coach" and "they share nothing with
+    // you" are different answers and the app should not conflate them.
+    await this.accessService.assertSelfOrCoach(req.user.id, clientId);
+    return this.userService.getCoachDataAccess(clientId);
+  }
+
+  /**
+   * POST /coaches/client/:clientId/access-request
+   *
+   * Ask a client to unlock one scope. Grants nothing: it sends them a prompt,
+   * and the decision is theirs to record through the consent endpoints.
+   *
+   * Rate limiting lives in the schema (one open request per coach/client/scope)
+   * and in the service (a cooldown after a decline). Both matter: an ask that
+   * can be repeated at will is a way to pressure someone into consenting, and
+   * consent given under pressure is not freely given.
+   */
+  @Post('client/:clientId/access-request')
+  @HttpCode(HttpStatus.OK)
+  async requestClientAccess(
+    @Param('clientId', ParseUUIDPipe) clientId: string,
+    @Body() body: CreateAccessRequestDto,
+    @Req() req: authReq.AuthenticatedRequest,
+  ) {
+    // assertSelfOrCoach would let a user "request access" to their own data,
+    // which is meaningless, so the relation is checked directly instead.
+    if (!(await this.accessService.isCoachOf(req.user.id, clientId))) {
+      throw new ForbiddenException('Not your client');
+    }
+    return this.accessRequestService.createRequest(
+      req.user.id,
+      clientId,
+      body.scope,
+    );
   }
 
   @Get('search')

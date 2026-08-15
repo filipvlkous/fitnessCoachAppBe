@@ -97,6 +97,24 @@ interface LogExerciseDto {
   }>;
 }
 
+// What the user did the last time they trained a given exercise, so a new
+// session can be pre-filled with the weights they actually used.
+interface LastPerformance {
+  workout_log_id: string;
+  date: string;
+  sets: Array<{
+    set_number: number;
+    weight: number | null;
+    reps: number | null;
+    note: string | null;
+  }>;
+  top_weight: number | null;
+}
+
+// How many of the user's most recent workouts to scan when looking for the
+// last time each exercise was performed.
+const LAST_PERFORMANCE_LOOKBACK_SESSIONS = 40;
+
 @Injectable()
 export class ProgramsService {
   constructor(
@@ -272,6 +290,7 @@ export class ProgramsService {
       .select(
         `
           *,
+          user_workout_programs!inner ( user_id ),
          user_assigned_exercises (
             *,
             exercises (*)
@@ -286,7 +305,120 @@ export class ProgramsService {
     if (error) {
       throw new InternalServerErrorException(error.message);
     }
-    return data ?? {};
+    if (!data) return {};
+
+    return this.withLastPerformance(data);
+  }
+
+  // ============================================
+  // LAST PERFORMANCE (PREVIOUS WEIGHTS)
+  // ============================================
+
+  // Strips the program embed used only to resolve the athlete and decorates
+  // every assigned exercise with `last_performance`.
+  private async withLastPerformance(day: any) {
+    const { user_workout_programs, ...rest } = day;
+    const program = Array.isArray(user_workout_programs)
+      ? user_workout_programs[0]
+      : user_workout_programs;
+    const userId: string | undefined = program?.user_id;
+
+    const assigned: any[] = rest.user_assigned_exercises ?? [];
+    const exerciseIds = [
+      ...new Set(
+        assigned.map((ex) => ex.exercise_id).filter(Boolean) as string[],
+      ),
+    ];
+
+    const lastByExercise = userId
+      ? await this.getLastPerformanceByExercise(userId, exerciseIds)
+      : new Map<string, LastPerformance>();
+
+    return {
+      ...rest,
+      user_assigned_exercises: assigned.map((ex) => ({
+        ...ex,
+        last_performance: lastByExercise.get(ex.exercise_id) ?? null,
+      })),
+    };
+  }
+
+  // For each exercise id, the sets logged the last time the user trained it.
+  // One query over the user's most recent workouts; the newest log that
+  // contains an exercise wins, so an exercise skipped last week still keeps
+  // the weights from the week before.
+  async getLastPerformanceByExercise(
+    userId: string,
+    exerciseIds: string[],
+  ): Promise<Map<string, LastPerformance>> {
+    const result = new Map<string, LastPerformance>();
+    if (exerciseIds.length === 0) return result;
+
+    const { data, error } = await this.supabase
+      .from('workout_logs')
+      .select(
+        `
+        id,
+        workout_date,
+        user_workout_programs!inner ( user_id ),
+        exercise_logs (
+          exercises_id,
+          set_number,
+          weight,
+          reps,
+          note
+        )
+      `,
+      )
+      .eq('user_workout_programs.user_id', userId)
+      // Filters the embedded rows, so we only carry sets we actually need.
+      .in('exercise_logs.exercises_id', exerciseIds)
+      .order('workout_date', { ascending: false })
+      .limit(LAST_PERFORMANCE_LOOKBACK_SESSIONS);
+
+    if (error) {
+      // Previous weights are a convenience: never fail opening a workout day.
+      console.error('Error fetching last performance:', error);
+      return result;
+    }
+
+    // Logs arrive newest first, so the first log holding an exercise is the
+    // most recent one and later logs must not overwrite it.
+    for (const log of data ?? []) {
+      for (const setLog of (log as any).exercise_logs ?? []) {
+        const exerciseId = setLog.exercises_id;
+        if (!exerciseId) continue;
+
+        let entry = result.get(exerciseId);
+        if (!entry) {
+          entry = {
+            workout_log_id: (log as any).id,
+            date: (log as any).workout_date,
+            sets: [],
+            top_weight: null,
+          };
+          result.set(exerciseId, entry);
+        } else if (entry.workout_log_id !== (log as any).id) {
+          continue; // older session, we already have a newer one
+        }
+
+        entry.sets.push({
+          set_number: setLog.set_number,
+          weight: setLog.weight,
+          reps: setLog.reps,
+          note: setLog.note ?? null,
+        });
+        if (setLog.weight != null) {
+          entry.top_weight = Math.max(entry.top_weight ?? 0, setLog.weight);
+        }
+      }
+    }
+
+    for (const entry of result.values()) {
+      entry.sets.sort((a, b) => (a.set_number ?? 0) - (b.set_number ?? 0));
+    }
+
+    return result;
   }
 
   async getUserActiveWeek(userId: string) {
@@ -363,6 +495,7 @@ export class ProgramsService {
       .select(
         `
         *,
+        user_workout_programs!inner ( user_id ),
         user_assigned_exercises (
           *,
           exercises (*)
@@ -373,7 +506,7 @@ export class ProgramsService {
       .single();
 
     if (error) throw new NotFoundException('Day not found');
-    return data;
+    return this.withLastPerformance(data);
   }
 
   async updateProgramDayName(user_program_day_id: string, name: string) {

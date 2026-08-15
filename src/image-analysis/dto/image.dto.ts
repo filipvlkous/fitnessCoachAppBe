@@ -86,9 +86,21 @@ export class ManualFoodEntryDto {
   @IsNumber()
   meal_score?: number;
 
+  /**
+   * Every ingredient of the meal, stored as one meal record. Preferred over
+   * `item`, which older clients send one request per ingredient with — that
+   * turned a single dish into several entries in the food history.
+   */
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ManualFoodItemDto)
+  items?: ManualFoodItemDto[];
+
+  @IsOptional()
   @ValidateNested()
   @Type(() => ManualFoodItemDto)
-  item: ManualFoodItemDto;
+  item?: ManualFoodItemDto;
 }
 
 // Response shapes (not validated request DTOs)

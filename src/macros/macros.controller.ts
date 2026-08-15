@@ -4,6 +4,7 @@ import {
   Post,
   Body,
   Param,
+  Query,
   Req,
   UseGuards,
   Inject,
@@ -42,6 +43,34 @@ export class MacrosController {
         this.cacheManager.del(userCacheKey(userId, `/macros/${userId}/${d}`)),
       ),
     ]);
+  }
+
+  /**
+   * Logged meals, newest first, with the ingredients of each one. Declared
+   * before the `:userId` routes so its literal prefix is matched first.
+   */
+  @Get('mealHistory/:userId')
+  async getMealHistory(
+    @Param('userId') userId: string,
+    @Req() req: authReq.AuthenticatedRequest,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    await this.accessService.assertSelfOrCoach(req.user.id, userId);
+
+    const parsedLimit = Math.min(
+      Math.max(parseInt(limit ?? '', 10) || 20, 1),
+      50,
+    );
+    const parsedOffset = Math.max(parseInt(offset ?? '', 10) || 0, 0);
+
+    return {
+      body: await this.macrosService.getMealHistory(
+        userId,
+        parsedLimit,
+        parsedOffset,
+      ),
+    };
   }
 
   @Get(':userId')

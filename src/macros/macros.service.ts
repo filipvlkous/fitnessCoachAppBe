@@ -68,6 +68,33 @@ export class MacrosService {
     return data;
   }
 
+  /**
+   * One page of the user's meal log, newest first, each meal carrying its
+   * ingredient rows. One row past the page is fetched so the caller knows
+   * whether more history exists without a second count query.
+   */
+  async getMealHistory(userId: string, limit: number, offset: number) {
+    const { data, error } = await this.supabaseService.supabase
+      .from('meals')
+      .select(
+        `id, name, type, meal_time, meal_score, created_at,
+         total_calories, total_carbs, total_fat, total_protein, total_weight,
+         item_count,
+         meal_ingredients ( id, name, weight, calories, protein, carbs, fat )`,
+      )
+      .eq('user_id', userId)
+      .order('meal_time', { ascending: false })
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit);
+
+    if (error) {
+      throw new Error(`Error fetching meal history: ${error.message}`);
+    }
+
+    const rows = data ?? [];
+    return { meals: rows.slice(0, limit), hasMore: rows.length > limit };
+  }
+
   async getDailyMacros(userId: string, date: string) {
     // Half-open range [date, date + 1 day) so no second of the day is missed.
     const nextDay = new Date(`${date}T00:00:00Z`);

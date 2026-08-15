@@ -8,7 +8,51 @@ import {
 import { randomBytes } from 'crypto';
 import { NotificationsService } from 'src/notifications/notifications.service';
 import { SupabaseService } from 'src/supabase/supabase.service';
+import {
+  COACH_DATA_SCOPES,
+  COACH_SCOPE_KIND,
+  CoachDataScope,
+  CONSENT_KEYS,
+  CONSENT_KIND,
+  ConsentKey,
+  isImplausibleBirthDate,
+  meetsMinimumAge,
+  MIN_AGE_YEARS,
+  parseIsoDate,
+} from './consent.constants';
+import {
+  ConsentPayload,
+  ConsentRecordDto,
+  SaveConsentsDto,
+} from './dto/consent.dto';
 import { BecomeCoachDto, UpdateProfileDto } from './dto/user.dto';
+
+/** Consent columns on the `user` row. */
+interface ConsentStateRow {
+  date_of_birth: string | null;
+  consent_terms_version: string | null;
+  consent_policy_version: string | null;
+}
+
+/** A row of the `user_consents_current` view. */
+interface CurrentConsentRow {
+  kind: string;
+  consent_key: string;
+  granted: boolean;
+  decided_at: string | null;
+  policy_version: string;
+}
+
+/** A row on its way into the ledger. */
+interface ConsentEventRow {
+  user_id: string;
+  kind: string;
+  consent_key: string;
+  granted: boolean;
+  decided_at: string;
+  policy_version: string;
+  terms_version: string | null;
+}
 
 @Injectable()
 export class UserService {
@@ -480,5 +524,297 @@ export class UserService {
     }
 
     return data;
+  }
+
+  /**
+   * Current consent state, or null when this user has never recorded anything —
+   * which is what sends the app to the consent screen after a reinstall.
+   *
+   * Reads the `user_consents_current` view rather than the ledger itself: the
+   * ledger grows with every decision, the view is one row per key.
+   */
+  async getConsents(userId: string): Promise<ConsentPayload | null> {
+    const { data: stateData, error: userError } =
+      await this.supabaseService.supabase
+        .from('user')
+        .select('date_of_birth, consent_terms_version, consent_policy_version')
+        .eq('id', userId)
+        .maybeSingle();
+
+    if (userError) {
+      throw new InternalServerErrorException(
+        `Error fetching consent state: ${userError.message}`,
+      );
+    }
+
+    const { data: rowData, error } = await this.supabaseService.supabase
+      .from('user_consents_current')
+      .select('kind, consent_key, granted, decided_at, policy_version')
+      .eq('user_id', userId);
+
+    if (error) {
+      throw new InternalServerErrorException(
+        `Error fetching consents: ${error.message}`,
+      );
+    }
+
+    const state = stateData as ConsentStateRow | null;
+    const rows = (rowData ?? []) as CurrentConsentRow[];
+
+    if (!state?.date_of_birth && rows.length === 0) return null;
+
+    const consents: ConsentPayload['consents'] = {};
+    const coachPermissions: ConsentPayload['coachPermissions'] = {};
+
+    for (const row of rows) {
+      const decision = {
+        granted: row.granted,
+        // Postgres renders timestamptz as `+00:00`; the app stores and compares
+        // plain ISO strings, so normalize rather than hand back either form.
+        decidedAt: row.decided_at
+          ? new Date(row.decided_at).toISOString()
+          : null,
+        policyVersion: row.policy_version,
+      };
+
+      if (row.kind === COACH_SCOPE_KIND) {
+        coachPermissions[row.consent_key as CoachDataScope] = decision;
+      } else {
+        consents[row.consent_key as ConsentKey] = decision;
+      }
+    }
+
+    return {
+      dateOfBirth: state?.date_of_birth ?? null,
+      termsVersion: state?.consent_terms_version ?? null,
+      policyVersion: state?.consent_policy_version ?? null,
+      consents,
+      coachPermissions,
+    };
+  }
+
+  /**
+   * What a connected coach may actually read about this user, per scope.
+   *
+   * This is the ANDing the ledger deliberately does not do: a `coachScope` row
+   * only means something while the `coachSharing` consent is standing, so
+   * withdrawing that one consent closes every scope at once without having to
+   * rewrite the individual scope decisions.
+   *
+   * Fails closed on every unknown: a scope with no recorded decision, a user who
+   * never went through the consent screen, or a missing `coachSharing` row all
+   * come back false. Silence is not permission.
+   */
+  async getCoachDataAccess(
+    userId: string,
+  ): Promise<Record<CoachDataScope, boolean>> {
+    const denied = Object.fromEntries(
+      COACH_DATA_SCOPES.map((scope) => [scope, false]),
+    ) as Record<CoachDataScope, boolean>;
+
+    const { data, error } = await this.supabaseService.supabase
+      .from('user_consents_current')
+      .select('kind, consent_key, granted')
+      .eq('user_id', userId);
+
+    if (error) {
+      throw new InternalServerErrorException(
+        `Error fetching coach permissions: ${error.message}`,
+      );
+    }
+
+    const rows = (data ?? []) as Pick<
+      CurrentConsentRow,
+      'kind' | 'consent_key' | 'granted'
+    >[];
+
+    const sharing = rows.some(
+      (row) =>
+        row.kind === CONSENT_KIND &&
+        row.consent_key === ('coachSharing' satisfies ConsentKey) &&
+        row.granted,
+    );
+    if (!sharing) return denied;
+
+    for (const row of rows) {
+      if (row.kind !== COACH_SCOPE_KIND) continue;
+      const scope = row.consent_key as CoachDataScope;
+      // Guard against a key the ledger holds but this build does not know.
+      if (scope in denied) denied[scope] = row.granted;
+    }
+
+    return denied;
+  }
+
+  /**
+   * Records a set of consent decisions.
+   *
+   * Two things make this safe to call repeatedly, which matters because the app
+   * replays the whole snapshot on every start while a sync is pending:
+   *  - decisions are appended, never overwritten, so a withdrawal stays visible
+   *    in the history after a later re-grant;
+   *  - a replay of a decision already held collapses to a no-op, so retries do
+   *    not bury the real history under duplicates.
+   */
+  async saveConsents(
+    userId: string,
+    dto: SaveConsentsDto,
+  ): Promise<ConsentPayload> {
+    // Before anything is written: no age check, no consent.
+    const dateOfBirth = await this.resolveDateOfBirth(
+      userId,
+      dto.dateOfBirth ?? null,
+    );
+
+    const update: Record<string, unknown> = {
+      date_of_birth: dateOfBirth,
+      consent_updated_at: new Date().toISOString(),
+    };
+    if (dto.termsVersion) update.consent_terms_version = dto.termsVersion;
+    if (dto.policyVersion) update.consent_policy_version = dto.policyVersion;
+
+    const { data: updated, error: userError } =
+      await this.supabaseService.supabase
+        .from('user')
+        .update(update)
+        .eq('id', userId)
+        .select('id')
+        .maybeSingle();
+
+    if (userError) {
+      throw new InternalServerErrorException(
+        `Error saving consent state: ${userError.message}`,
+      );
+    }
+    if (!updated) throw new NotFoundException('User not found');
+
+    const rows: ConsentEventRow[] = [
+      ...this.toEventRows(
+        userId,
+        CONSENT_KIND,
+        CONSENT_KEYS,
+        dto.consents,
+        dto.termsVersion ?? null,
+      ),
+      ...this.toEventRows(
+        userId,
+        COACH_SCOPE_KIND,
+        COACH_DATA_SCOPES,
+        dto.coachPermissions,
+        dto.termsVersion ?? null,
+      ),
+    ];
+
+    if (rows.length > 0) {
+      const { error } = await this.supabaseService.supabase
+        .from('user_consent_events')
+        .upsert(rows, {
+          // `ignoreDuplicates` makes this ON CONFLICT DO NOTHING — an insert of
+          // a decision we already hold, not an update of one, which the
+          // append-only trigger would reject anyway.
+          onConflict: 'user_id,kind,consent_key,decided_at',
+          ignoreDuplicates: true,
+        });
+
+      if (error) {
+        throw new InternalServerErrorException(
+          `Error recording consent: ${error.message}`,
+        );
+      }
+    }
+
+    const payload = await this.getConsents(userId);
+    if (!payload) {
+      throw new InternalServerErrorException('Consent was not persisted');
+    }
+    return payload;
+  }
+
+  /**
+   * Turns one submitted vocabulary into ledger rows.
+   *
+   * Iterates the server's own key list rather than the submitted object's keys,
+   * so a client cannot widen the vocabulary by inventing a key — the DTO
+   * whitelist already strips those, and this makes it structural rather than
+   * dependent on the pipe staying configured that way.
+   */
+  private toEventRows<K extends string>(
+    userId: string,
+    kind: string,
+    keys: readonly K[],
+    submitted: Partial<Record<K, ConsentRecordDto>> | undefined,
+    termsVersion: string | null,
+  ): ConsentEventRow[] {
+    if (!submitted) return [];
+
+    return keys.flatMap((key) => {
+      const record = submitted[key];
+      // No decision timestamp means the user never answered this one, and a
+      // non-answer is not something to record.
+      if (!record?.decidedAt) return [];
+      return [
+        {
+          user_id: userId,
+          kind,
+          consent_key: key,
+          granted: record.granted,
+          decided_at: new Date(record.decidedAt).toISOString(),
+          policy_version: record.policyVersion,
+          terms_version: termsVersion,
+        },
+      ];
+    });
+  }
+
+  /**
+   * Resolves the birth date to record and enforces the age gate on it.
+   *
+   * Falls back to the stored value so a settings toggle, which sends whatever
+   * the app happens to hold, cannot quietly clear a birth date we already have.
+   * The gate runs on the stored value too — a row written before this check
+   * existed gets validated the first time it is touched.
+   */
+  private async resolveDateOfBirth(
+    userId: string,
+    submitted: string | null,
+  ): Promise<string> {
+    let value = submitted;
+
+    if (!value) {
+      const { data } = await this.supabaseService.supabase
+        .from('user')
+        .select('date_of_birth')
+        .eq('id', userId)
+        .maybeSingle();
+      value =
+        (data as Pick<ConsentStateRow, 'date_of_birth'> | null)
+          ?.date_of_birth ?? null;
+    }
+
+    if (!value) {
+      throw new BadRequestException(
+        'dateOfBirth is required: consent cannot be recorded without an age check',
+      );
+    }
+
+    const dob = parseIsoDate(value);
+    if (!dob) {
+      throw new BadRequestException('dateOfBirth is not a real calendar date');
+    }
+
+    const now = new Date();
+    if (isImplausibleBirthDate(dob, now)) {
+      throw new BadRequestException(
+        'dateOfBirth is not a plausible birth date',
+      );
+    }
+
+    if (!meetsMinimumAge(dob, now)) {
+      throw new ForbiddenException(
+        `Consent cannot be recorded: users must be at least ${MIN_AGE_YEARS} years old`,
+      );
+    }
+
+    return value;
   }
 }

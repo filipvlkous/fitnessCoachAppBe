@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   HttpException,
@@ -52,24 +53,30 @@ export class ImageAnalysisController {
     }
   }
 
-  /** Manually add macros for a single food item without image analysis. */
+  /** Manually add a meal and its ingredients without image analysis. */
   @Post('food/manual')
   async addFoodManually(
     @Body() dto: ManualFoodEntryDto,
     @Req() req: authReq.AuthenticatedRequest,
   ) {
+    // `items` carries the whole dish in one request; `item` is the legacy
+    // one-request-per-ingredient shape, which split a dish into several meals.
+    const entries = dto.items?.length ? dto.items : dto.item ? [dto.item] : [];
+
+    if (entries.length === 0) {
+      throw new BadRequestException('A meal needs at least one ingredient.');
+    }
+
     const foodItems = JSON.stringify({
-      foodArray: [
-        {
-          name: dto.item.name,
-          weight: dto.item.weight,
-          protein: dto.item.protein,
-          fat: dto.item.fat,
-          carbs: dto.item.carbs,
-          calories: dto.item.calories,
-          nutritionScore: 0,
-        },
-      ],
+      foodArray: entries.map((entry) => ({
+        name: entry.name,
+        weight: entry.weight,
+        protein: entry.protein,
+        fat: entry.fat,
+        carbs: entry.carbs,
+        calories: entry.calories,
+        nutritionScore: 0,
+      })),
     });
 
     // The meal always belongs to the authenticated user.
