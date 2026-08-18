@@ -80,7 +80,7 @@ export class MacrosService {
         `id, name, type, meal_time, meal_score, created_at,
          total_calories, total_carbs, total_fat, total_protein, total_weight,
          item_count,
-         meal_ingredients ( id, name, weight, calories, protein, carbs, fat )`,
+         meal_ingredients ( id, name, weight, unit, calories, protein, carbs, fat )`,
       )
       .eq('user_id', userId)
       .order('meal_time', { ascending: false })

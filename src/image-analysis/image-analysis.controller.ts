@@ -71,6 +71,7 @@ export class ImageAnalysisController {
       foodArray: entries.map((entry) => ({
         name: entry.name,
         weight: entry.weight,
+        unit: entry.unit ?? 'g',
         protein: entry.protein,
         fat: entry.fat,
         carbs: entry.carbs,

@@ -2,12 +2,22 @@ import { Type } from 'class-transformer';
 import {
   IsArray,
   IsDateString,
+  IsIn,
   IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
   ValidateNested,
 } from 'class-validator';
+
+/**
+ * How an amount was measured. Grams and millilitres share one scale here:
+ * nutrition databases publish per 100 g for solids and per 100 ml for drinks in
+ * the same fields, so `weight` means the same number either way and the unit is
+ * the label that makes 330 ml of beer read correctly instead of 330 g.
+ */
+export const FOOD_UNITS = ['g', 'ml'] as const;
+export type FoodUnit = (typeof FOOD_UNITS)[number];
 
 export class AnalyzeFoodDto {
   // e.g. "data:image/png;base64,iVBORw0KGgoAAAANS…"
@@ -59,6 +69,11 @@ export class ManualFoodItemDto {
   @IsNumber()
   weight: number;
 
+  /** Defaults to grams — older clients do not send it. */
+  @IsOptional()
+  @IsIn(FOOD_UNITS)
+  unit?: FoodUnit;
+
   @IsNumber()
   protein: number;
 
@@ -107,6 +122,7 @@ export class ManualFoodEntryDto {
 export class FoodItemResponse {
   name: string;
   weight: number;
+  unit?: FoodUnit;
   count: number;
   protein: number;
   fat: number;

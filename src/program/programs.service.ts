@@ -216,7 +216,7 @@ export class ProgramsService {
 
     if (error) throw new NotFoundException('Program not found');
 
-    return program;
+    return this.sortProgramDayExercises(program);
   }
 
   // Update program details
@@ -253,6 +253,45 @@ export class ProgramsService {
       message: 'Program deleted successfully',
       user_id: program?.user_id ?? null,
       coach_id: program?.coach_id ?? null,
+    };
+  }
+
+  // ============================================
+  // EXERCISE ORDERING
+  // ============================================
+
+  // PostgREST returns embedded rows in whatever order Postgres hands them
+  // back, which changes as soon as a row is updated. The coach's chosen order
+  // only survives a round-trip if we sort by `sort_order` explicitly, so every
+  // read path that exposes assigned exercises goes through this.
+  // `created_at` is the tie-breaker so rows written before ordering existed
+  // (all sharing sort_order 0) still come back in a stable sequence.
+  private sortAssignedExercises<T extends Record<string, any>>(
+    exercises: T[] | null | undefined,
+  ): T[] {
+    if (!Array.isArray(exercises)) return [];
+    return [...exercises].sort((a, b) => {
+      const orderDiff = (a.sort_order ?? 0) - (b.sort_order ?? 0);
+      if (orderDiff !== 0) return orderDiff;
+      return String(a.created_at ?? '').localeCompare(
+        String(b.created_at ?? ''),
+      );
+    });
+  }
+
+  // Same, for a program payload whose days each embed their exercises.
+  private sortProgramDayExercises<T extends Record<string, any>>(
+    program: T | null | undefined,
+  ): T | null | undefined {
+    if (!program || !Array.isArray(program.user_program_days)) return program;
+    return {
+      ...program,
+      user_program_days: program.user_program_days.map((day: any) => ({
+        ...day,
+        user_assigned_exercises: this.sortAssignedExercises(
+          day?.user_assigned_exercises,
+        ),
+      })),
     };
   }
 
@@ -323,7 +362,7 @@ export class ProgramsService {
       : user_workout_programs;
     const userId: string | undefined = program?.user_id;
 
-    const assigned: any[] = rest.user_assigned_exercises ?? [];
+    const assigned = this.sortAssignedExercises(rest.user_assigned_exercises);
     const exerciseIds = [
       ...new Set(
         assigned.map((ex) => ex.exercise_id).filter(Boolean) as string[],
@@ -445,7 +484,7 @@ export class ProgramsService {
     if (error) {
       throw new InternalServerErrorException(error.message);
     }
-    return data ?? {};
+    return this.sortProgramDayExercises(data) ?? {};
   }
 
   // ============================================
@@ -561,12 +600,16 @@ export class ProgramsService {
         notes,
       }),
     );
-    const { error } = await this.supabase
+    // Return the created rows: the coach client holds optimistic placeholder
+    // IDs for these until it can swap in the real ones, and without them a
+    // follow-up reorder would try to update rows that don't exist.
+    const { data, error } = await this.supabase
       .from('user_assigned_exercises')
-      .insert(sanitized);
+      .insert(sanitized)
+      .select('id, exercise_id, sort_order');
 
     if (error) throw new InternalServerErrorException(error.message);
-    return true;
+    return data ?? [];
   }
 
   // Update assigned exercise
@@ -667,22 +710,43 @@ export class ProgramsService {
     return results.map((result) => result.data);
   }
 
-  // Resolve the athlete's user_id from a program day id.
-  // Used by the controller to invalidate the correct user's cache when a coach mutates a day.
-  async getAthleteIdForDay(dayId: string): Promise<string | null> {
+  // Everything the controller needs to invalidate the caches touching a day:
+  // the athlete it belongs to plus the program/day coordinates that key the
+  // athlete's "active day" response.
+  async getDayContext(dayId: string): Promise<{
+    athleteId: string | null;
+    programId: string | null;
+    dayNumber: number | null;
+  }> {
     const { data, error } = await this.supabase
       .from('user_program_days')
-      .select('user_workout_programs!inner(user_id)')
+      .select('program_id, day_number, user_workout_programs!inner(user_id)')
       .eq('id', dayId)
       .single();
 
-    if (error || !data) return null;
+    if (error || !data) {
+      return { athleteId: null, programId: null, dayNumber: null };
+    }
+
     const programs = data['user_workout_programs'] as
       | { user_id: string }
       | { user_id: string }[];
-    return Array.isArray(programs)
+    const athleteId = Array.isArray(programs)
       ? (programs[0]?.user_id ?? null)
       : (programs?.user_id ?? null);
+
+    return {
+      athleteId,
+      programId: data.program_id ?? null,
+      dayNumber: data.day_number ?? null,
+    };
+  }
+
+  // Resolve the athlete's user_id from a program day id.
+  // Used by the controller to invalidate the correct user's cache when a coach mutates a day.
+  async getAthleteIdForDay(dayId: string): Promise<string | null> {
+    const { athleteId } = await this.getDayContext(dayId);
+    return athleteId;
   }
 
   // ============================================

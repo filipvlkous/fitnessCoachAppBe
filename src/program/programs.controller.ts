@@ -43,25 +43,33 @@ export class ProgramsController {
     @Inject(CACHE_MANAGER) private cacheManager: CacheManagerTypes.Cache,
   ) {}
 
-  private async invalidateUserCache(userId: string | null | undefined) {
+  // Clear the program responses that describe `userId`. Those entries are
+  // keyed by whoever requested them, so a coach reading their client's program
+  // has their own copy: pass `viewerId` to clear that one too, otherwise a
+  // coach keeps seeing their pre-edit snapshot until the TTL lapses.
+  private async invalidateUserCache(
+    userId: string | null | undefined,
+    viewerId?: string | null,
+  ) {
     if (!userId) return;
+    const reader = viewerId ?? userId;
     await Promise.all([
       this.cacheManager.del(
-        userCacheKey(userId, `/programs/users/${userId}/all`),
+        userCacheKey(reader, `/programs/users/${userId}/all`),
       ),
       this.cacheManager.del(
-        userCacheKey(userId, `/programs/users/${userId}/active`),
+        userCacheKey(reader, `/programs/users/${userId}/active`),
       ),
       this.cacheManager.del(
-        userCacheKey(userId, `/programs/users/${userId}/activeWeek`),
+        userCacheKey(reader, `/programs/users/${userId}/activeWeek`),
       ),
       this.cacheManager.del(
-        userCacheKey(userId, `/programs/users/${userId}/stats`),
+        userCacheKey(reader, `/programs/users/${userId}/stats`),
       ),
       this.cacheManager.del(
-        userCacheKey(userId, `/programs/users/${userId}/history`),
+        userCacheKey(reader, `/programs/users/${userId}/history`),
       ),
-      this.cacheManager.del(userCacheKey(userId, '/workoutHistory/streak')),
+      this.cacheManager.del(userCacheKey(reader, '/workoutHistory/streak')),
     ]);
   }
 
@@ -89,19 +97,39 @@ export class ProgramsController {
   }
 
   private async invalidateDayCache(requesterId: string, dayId: string) {
-    // Always clear the day entry for the requester (may be the athlete themselves)
-    await this.cacheManager.del(
-      userCacheKey(requesterId, `/programs/days/${dayId}`),
-    );
-    await this.invalidateUserCache(requesterId);
+    const { athleteId, programId, dayNumber } =
+      await this.programsService.getDayContext(dayId);
 
-    // If a coach is making the change, also clear the athlete's caches so they see the update immediately
-    const athleteId = await this.programsService.getAthleteIdForDay(dayId);
-    if (athleteId && athleteId !== requesterId) {
-      await this.cacheManager.del(
-        userCacheKey(athleteId, `/programs/days/${dayId}`),
+    // Everyone who can read this day: the requester, plus the athlete when a
+    // coach is the one making the change.
+    const readers = [requesterId];
+    if (athleteId && athleteId !== requesterId) readers.push(athleteId);
+
+    const deletions: Promise<unknown>[] = [];
+    for (const reader of readers) {
+      deletions.push(
+        this.cacheManager.del(userCacheKey(reader, `/programs/days/${dayId}`)),
       );
+      // The athlete's workout screen reads the day by program + weekday, so
+      // that entry has to go as well or a reorder won't show up in training.
+      if (programId && dayNumber != null) {
+        deletions.push(
+          this.cacheManager.del(
+            userCacheKey(
+              reader,
+              `/programs/exercises/${programId}/active/${dayNumber}`,
+            ),
+          ),
+        );
+      }
+    }
+    await Promise.all(deletions);
+
+    await this.invalidateUserCache(requesterId);
+    if (athleteId && athleteId !== requesterId) {
+      // The athlete's own copies, and the coach's copy of the athlete's data.
       await this.invalidateUserCache(athleteId);
+      await this.invalidateUserCache(athleteId, requesterId);
     }
   }
 

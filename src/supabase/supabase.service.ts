@@ -12,6 +12,8 @@ type FoodItem = {
   fat: number;
   protein: number;
   weight: number;
+  /** 'g' or 'ml'; anything else (including absent) is stored as grams. */
+  unit?: string;
   nutritionScore: number;
 };
 
@@ -100,6 +102,9 @@ export class SupabaseService {
         total_carbs: Math.round(acc.total_carbs + (item.carbs || 0)),
         total_fat: Math.round(acc.total_fat + (item.fat || 0)),
         total_protein: Math.round(acc.total_protein + (item.protein || 0)),
+        // Amounts are summed regardless of unit: a dish mixing 200 g of rice
+        // with 300 ml of milk has no single meaningful total, so clients that
+        // care read the per-ingredient units instead.
         total_weight: Math.round(acc.total_weight + (item.weight || 0)),
         item_count: acc.item_count + 1,
       }),
@@ -132,6 +137,7 @@ export class SupabaseService {
       meal_id: mealRow.id,
       name: i.name,
       weight: Math.round(i.weight || 0),
+      unit: i.unit === 'ml' ? 'ml' : 'g',
       protein: Math.round(i.protein || 0),
       fat: Math.round(i.fat || 0),
       carbs: Math.round(i.carbs || 0),
