@@ -74,6 +74,27 @@ export class ManualFoodItemDto {
   @IsIn(FOOD_UNITS)
   unit?: FoodUnit;
 
+  /**
+   * How the amount reads to a person — "🍳 2 kusy (100 g)". The photo scan
+   * sends these; the manual food form has no serving concept and omits them,
+   * in which case the history shows the plain weight.
+   */
+  @IsOptional()
+  @IsString()
+  emoji?: string;
+
+  @IsOptional()
+  @IsNumber()
+  servings?: number;
+
+  @IsOptional()
+  @IsString()
+  servingLabel?: string;
+
+  @IsOptional()
+  @IsNumber()
+  servingGrams?: number;
+
   @IsNumber()
   protein: number;
 
@@ -118,12 +139,30 @@ export class ManualFoodEntryDto {
   item?: ManualFoodItemDto;
 }
 
-// Response shapes (not validated request DTOs)
+// ── Response shapes (documentation only — not validated request DTOs) ──
+//
+// The authoritative types live in image-analysis.service.ts; these mirror them
+// for Swagger. Keep them in step with `AnalyzedFoodItem` / `MealAnalysis`.
+
+export class Per100Response {
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+}
+
 export class FoodItemResponse {
   name: string;
+  /** Single emoji for the row thumbnail. */
+  emoji: string;
+  /** "2 kusy (100 g)" — servings × servingGrams is the weight. */
+  servings: number;
+  servingLabel: string;
+  servingGrams: number;
   weight: number;
-  unit?: FoodUnit;
-  count: number;
+  unit: FoodUnit;
+  /** Basis for the macros below; lets a client rescale an edited amount. */
+  per100: Per100Response;
   protein: number;
   fat: number;
   carbs: number;
@@ -131,6 +170,11 @@ export class FoodItemResponse {
 }
 
 export class FoodAnalysisResponse {
+  /** Which branch the router took: an eaten meal, or a printed label. */
+  kind: 'meal' | 'label';
   foodTitle: string;
+  mealScore: number;
+  /** Serving text off a label, e.g. "1 porce (30 g)". Null for meal photos. */
+  servingLabel: string | null;
   foodArray: FoodItemResponse[];
 }

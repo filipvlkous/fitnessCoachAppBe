@@ -15,6 +15,15 @@ type FoodItem = {
   /** 'g' or 'ml'; anything else (including absent) is stored as grams. */
   unit?: string;
   nutritionScore: number;
+  /**
+   * How the amount reads to a person — "🍳 2 kusy (100 g)". Set by the photo
+   * scan; absent for the manual food form, which has no serving concept, and
+   * for anything logged before these columns existed.
+   */
+  emoji?: string;
+  servings?: number;
+  servingLabel?: string;
+  servingGrams?: number;
 };
 
 @Injectable()
@@ -133,16 +142,27 @@ export class SupabaseService {
 
     if (mealErr) throw new InternalServerErrorException(mealErr.message);
 
+    // One decimal, not a whole number: a 5 g pinch of herbs is 0.1 g of
+    // protein, and rounding that to 0 made the ingredient rows fail to add up
+    // to the meal's own totals.
+    const round1 = (n: number) => Math.round((n || 0) * 10) / 10;
+
     const ingredients = parsed.foodArray.map((i) => ({
       meal_id: mealRow.id,
       name: i.name,
       weight: Math.round(i.weight || 0),
       unit: i.unit === 'ml' ? 'ml' : 'g',
-      protein: Math.round(i.protein || 0),
-      fat: Math.round(i.fat || 0),
-      carbs: Math.round(i.carbs || 0),
+      protein: round1(i.protein),
+      fat: round1(i.fat),
+      carbs: round1(i.carbs),
       calories: Math.round(i.calories || 0),
       nutritionScore: Math.round(i.nutritionScore || 0),
+      // Null rather than a default: the history distinguishes "logged as 2
+      // kusy" from "logged as a plain weight" and renders them differently.
+      emoji: i.emoji ?? null,
+      servings: i.servings ?? null,
+      serving_label: i.servingLabel ?? null,
+      serving_grams: i.servingGrams ?? null,
     }));
 
     const { error: ingErr } = await this.supabase

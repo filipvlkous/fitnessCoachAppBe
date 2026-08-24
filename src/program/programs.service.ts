@@ -82,7 +82,8 @@ interface LogWorkoutDto {
   program_day_id: string;
   workout_id: string;
   workout_date: string;
-  coach_id: string;
+  // Absent for an athlete training without a coach.
+  coach_id?: string | null;
 }
 
 interface LogExerciseDto {
@@ -189,6 +190,52 @@ export class ProgramsService {
         'Failed to create program: ' + err.message,
       );
     }
+  }
+
+  // Create the athlete's own coach-less program, or hand back the active one
+  // they already have. Idempotent on purpose: the home screen calls this from a
+  // button, and a double tap must not fork the plan into two active programs.
+  // Returns the same shape as getUserActiveProgram so the caller can drop it
+  // straight into the home query cache.
+  async createSoloProgram(userId: string, name?: string) {
+    const withDayCounts = `
+      *,
+      user_program_days (
+        *,
+        user_assigned_exercises: user_assigned_exercises (
+          count
+        )
+      )
+    `;
+
+    const { data: existing, error: existingError } = await this.supabase
+      .from('user_workout_programs')
+      .select(withDayCounts)
+      .eq('user_id', userId)
+      .eq('status', 'active')
+      .order('start_date', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (existingError) {
+      throw new InternalServerErrorException(existingError.message);
+    }
+    if (existing) return existing;
+
+    const { data, error } = await this.supabase
+      .from('user_workout_programs')
+      .insert({
+        user_id: userId,
+        coach_id: null,
+        name: name?.trim() || 'Můj plán',
+        start_date: new Date().toISOString().split('T')[0],
+        status: 'active',
+      })
+      .select(withDayCounts)
+      .single();
+
+    if (error) throw new InternalServerErrorException(error.message);
+    return data;
   }
 
   // Get program with all days and exercises
@@ -772,7 +819,7 @@ export class ProgramsService {
     const { data, error } = await this.supabase
       .from('workout_logs')
       .insert({
-        coach_id: dto.coach_id,
+        coach_id: dto.coach_id ?? null,
         program_day_id: dto.program_day_id,
         user_workout_program_id: dto.workout_id,
         workout_date: workoutDate,

@@ -31,6 +31,13 @@ export class ImageAnalysisController {
     private readonly supabaseService: SupabaseService,
   ) {}
 
+  /**
+   * Route and analyze a photo in one call.
+   *
+   * The response says which branch was taken (`kind`) and carries finished
+   * macros either way, so the client no longer follows up with
+   * `food/macronutrients` — it saves through `food/manual` instead.
+   */
   @Post('food/analyze')
   async analyzeFoodImage(@Body() analyzeFoodDto: AnalyzeFoodDto) {
     try {
@@ -77,6 +84,12 @@ export class ImageAnalysisController {
         carbs: entry.carbs,
         calories: entry.calories,
         nutritionScore: 0,
+        // Present when the entry came from a photo scan; the manual form omits
+        // them and the history then falls back to showing the plain weight.
+        emoji: entry.emoji,
+        servings: entry.servings,
+        servingLabel: entry.servingLabel,
+        servingGrams: entry.servingGrams,
       })),
     });
 
@@ -94,6 +107,12 @@ export class ImageAnalysisController {
   }
 
   /** Store or recalculate macronutrients for the analysed food. */
+  /**
+   * @deprecated Second half of the old two-call flow: estimate macros for
+   * already-detected items, then save. `food/analyze` now returns macros
+   * directly, so current clients do not call this. Kept for app versions
+   * already installed that still do.
+   */
   @Post('food/macronutrients')
   async saveMacronutrients(
     @Body() macronutrientDto: AnalyzeFoodResponseDto,

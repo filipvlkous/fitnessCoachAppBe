@@ -134,6 +134,14 @@ export class CreateUserProgramDto {
   days: ProgramDayDto[];
 }
 
+// A program the athlete creates for themselves. There is no `user_id` or
+// `coach_id`: the route always writes a program owned by the caller.
+export class CreateSoloProgramDto {
+  @IsString()
+  @IsOptional()
+  name?: string;
+}
+
 export class UpdateProgramDto {
   @IsString()
   @IsOptional()
@@ -267,8 +275,10 @@ export class LogWorkoutDto {
   @IsDateString()
   workout_date: string;
 
+  // Null for an athlete training without a coach.
+  @IsOptional()
   @IsString()
-  coach_id: string;
+  coach_id?: string | null;
 }
 
 export class ExerciseSetDto {

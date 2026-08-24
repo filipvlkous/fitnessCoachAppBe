@@ -171,6 +171,22 @@ export class ProgramsController {
     return result;
   }
 
+  // An athlete training without a coach creates their own program. Coach-made
+  // programs keep going through POST / — this route only ever writes a program
+  // owned by the caller, so the auth guard is the whole authorization story.
+  @Post('self')
+  async createSoloProgram(
+    @Body() body: dto.CreateSoloProgramDto,
+    @Req() req: authReq.AuthenticatedRequest,
+  ) {
+    const result = await this.programsService.createSoloProgram(
+      req.user.id,
+      body.name,
+    );
+    await this.invalidateUserCache(req.user.id);
+    return result;
+  }
+
   @Put(':programId')
   async updateProgram(
     @Param('programId') programId: string,
@@ -260,6 +276,11 @@ export class ProgramsController {
     );
     const result = await this.programsService.createProgramDay(dayDto);
     await this.invalidateProgramCache(dayDto.program_id, req.user.id);
+    // The athlete's home and training screens read the program through
+    // `/users/:id/active` and `/activeWeek`, which invalidateProgramCache does
+    // not touch. Without this a day stays invisible to them until the TTL
+    // lapses — and for a solo athlete that is their own screen, one tap later.
+    await this.invalidateDayCache(req.user.id, result.id);
     return result;
   }
 
