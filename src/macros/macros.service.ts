@@ -49,7 +49,14 @@ export class MacrosService {
     return data;
   }
 
-  async setUserMacros(userId: string, macros: SetMacrosDto) {
+  /**
+   * Upserts one weekday's macro targets.
+   *
+   * `actorId` is who made the change. A user setting their own targets needs
+   * no push telling them what they just did — and the client writes a day at a
+   * time, so without this a week's worth of edits arrives as seven pushes.
+   */
+  async setUserMacros(userId: string, macros: SetMacrosDto, actorId?: string) {
     const { day, ...macroData } = macros;
 
     const { data, error } = await this.supabaseService.supabase
@@ -61,10 +68,12 @@ export class MacrosService {
 
     if (error) throw new Error(`Error setting macros: ${error.message}`);
 
-    this.notificationsService.notifyUser(userId, {
-      title: 'Macros Updated',
-      body: `Your macros for ${getDayName(day)} have been updated.`,
-    });
+    if (actorId !== userId) {
+      this.notificationsService.notifyUser(userId, {
+        title: 'Macros Updated',
+        body: `Your macros for ${getDayName(day)} have been updated.`,
+      });
+    }
     return data;
   }
 

@@ -13,6 +13,11 @@ export interface WeekDayStatus {
   day_name: string | null;
 }
 
+export interface CoachFeedRow {
+  log_id: string;
+  [key: string]: unknown;
+}
+
 @Injectable()
 export class WorkoutHistoryService {
   constructor(private readonly supabaseService: SupabaseService) {}
@@ -338,6 +343,89 @@ export class WorkoutHistoryService {
       return null;
     }
 
-    return data;
+    return this.withFeedStats(data ?? []);
   };
+
+  // The feed card shows what was actually done, not just that something was.
+  // Two batched queries cover the whole page; the stats are additive, so a
+  // failure here returns the plain rows rather than failing the feed.
+  private async withFeedStats(logs: CoachFeedRow[]): Promise<CoachFeedRow[]> {
+    const logIds = logs.map((l) => l.log_id).filter(Boolean);
+    if (logIds.length === 0) return logs;
+
+    const [
+      { data: exerciseLogs, error: exerciseError },
+      { data: cardioLogs, error: cardioError },
+    ] = await Promise.all([
+      this.supabaseService.supabase
+        .from('exercise_logs')
+        .select('workout_log_id, exercises_id, weight, reps')
+        .in('workout_log_id', logIds),
+
+      this.supabaseService.supabase
+        .from('cardio_logs')
+        .select('workout_log_id, duration_minutes')
+        .in('workout_log_id', logIds),
+    ]);
+
+    if (exerciseError || cardioError) {
+      console.error(
+        'Error fetching coach feed stats:',
+        exerciseError ?? cardioError,
+      );
+      return logs;
+    }
+
+    const stats = new Map<
+      string,
+      {
+        exercises: Set<string>;
+        sets: number;
+        volume: number;
+        cardioCount: number;
+        cardioMinutes: number;
+      }
+    >();
+
+    const entryFor = (logId: string) => {
+      let entry = stats.get(logId);
+      if (!entry) {
+        entry = {
+          exercises: new Set<string>(),
+          sets: 0,
+          volume: 0,
+          cardioCount: 0,
+          cardioMinutes: 0,
+        };
+        stats.set(logId, entry);
+      }
+      return entry;
+    };
+
+    for (const row of exerciseLogs ?? []) {
+      const entry = entryFor(row.workout_log_id);
+      if (row.exercises_id) entry.exercises.add(row.exercises_id);
+      entry.sets += 1;
+      entry.volume += (row.weight ?? 0) * (row.reps ?? 0);
+    }
+
+    for (const row of cardioLogs ?? []) {
+      const entry = entryFor(row.workout_log_id);
+      entry.cardioCount += 1;
+      entry.cardioMinutes += row.duration_minutes ?? 0;
+    }
+
+    return logs.map((log) => {
+      const entry = stats.get(log.log_id);
+      return {
+        ...log,
+        exercise_count: entry?.exercises.size ?? 0,
+        set_count: entry?.sets ?? 0,
+        // Tonnage in kg: sum of weight x reps across every logged set.
+        total_volume: Math.round(entry?.volume ?? 0),
+        cardio_count: entry?.cardioCount ?? 0,
+        cardio_minutes: Math.round(entry?.cardioMinutes ?? 0),
+      };
+    });
+  }
 }

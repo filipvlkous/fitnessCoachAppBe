@@ -221,17 +221,12 @@ export class UserService {
 
     const userId = relation.user_id;
 
-    const { error } = await this.supabaseService.supabase
-      .from('coach_user_relations')
-      .update({ status: 'approved' })
-      .eq('id', relationId);
-
-    if (error) {
-      throw new InternalServerErrorException(
-        `Error approving user: ${error.message}`,
-      );
-    }
-
+    // The program is created before the relation is flipped. The other way
+    // round, a failing insert left the athlete approved in the database while
+    // the coach was told the approval had failed — accepted on one screen,
+    // still pending on the other, and no retry could reconcile it. This order
+    // makes the whole call safe to repeat: nothing changes until it works.
+    //
     // Only create a starter program when the user has no active one;
     // duplicate active programs break the active-program endpoints.
     const { data: existingActive } = await this.supabaseService.supabase
@@ -253,7 +248,6 @@ export class UserService {
           start_date: new Date().toISOString().split('T')[0],
           end_date: null,
           status: 'active',
-          workout_streek: 0,
         })
         .select()
         .single();
@@ -264,6 +258,17 @@ export class UserService {
         );
       }
       program = data;
+    }
+
+    const { error } = await this.supabaseService.supabase
+      .from('coach_user_relations')
+      .update({ status: 'approved' })
+      .eq('id', relationId);
+
+    if (error) {
+      throw new InternalServerErrorException(
+        `Error approving user: ${error.message}`,
+      );
     }
 
     this.notificationsService.notifyUser(userId, {

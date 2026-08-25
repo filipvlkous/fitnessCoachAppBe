@@ -91,6 +91,9 @@ interface LogExerciseDto {
   assigned_exercise_id: string;
   exercises_id: string;
   sets: Array<{
+    // Client-generated row id, present for sets replayed from the app's
+    // offline queue.
+    id?: string;
     weight: number | null;
     reps: number;
     set_number: number;
@@ -840,6 +843,9 @@ export class ProgramsService {
     }
 
     const exerciseLogs = dto.sets.map((set) => ({
+      // Only set when the client generated one (a set logged offline and
+      // replayed later); otherwise the column default assigns it.
+      ...(set.id ? { id: set.id } : {}),
       workout_log_id: dto.workout_log_id,
       assigned_exercise_id: dto.assigned_exercise_id,
       exercises_id: dto.exercises_id,
@@ -849,9 +855,11 @@ export class ProgramsService {
       note: set.note || null,
     }));
 
+    // Upsert rather than insert: a queued set whose response was lost gets
+    // replayed, and the second attempt must be a no-op, not a duplicate.
     const { error } = await this.supabase
       .from('exercise_logs')
-      .insert(exerciseLogs);
+      .upsert(exerciseLogs, { onConflict: 'id', ignoreDuplicates: true });
 
     if (error) throw new InternalServerErrorException(error.message);
     return true;
@@ -946,21 +954,28 @@ export class ProgramsService {
   }
 
   async logCardio(dto: {
+    id?: string;
     workout_log_id: string;
     cardio_type: string;
     duration_minutes: number;
     distance_km?: number | null;
     intensity?: string | null;
   }) {
+    // See logExerciseSets: a client-supplied id makes an offline replay
+    // idempotent.
     const { error, data } = await this.supabaseService.supabase
       .from('cardio_logs')
-      .insert({
-        workout_log_id: dto.workout_log_id,
-        cardio_type: dto.cardio_type,
-        duration_minutes: dto.duration_minutes,
-        distance_km: dto.distance_km ?? null,
-        intensity: dto.intensity ?? null,
-      })
+      .upsert(
+        {
+          ...(dto.id ? { id: dto.id } : {}),
+          workout_log_id: dto.workout_log_id,
+          cardio_type: dto.cardio_type,
+          duration_minutes: dto.duration_minutes,
+          distance_km: dto.distance_km ?? null,
+          intensity: dto.intensity ?? null,
+        },
+        { onConflict: 'id', ignoreDuplicates: true },
+      )
       .select()
       .single();
 

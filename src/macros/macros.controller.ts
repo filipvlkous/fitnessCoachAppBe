@@ -103,7 +103,11 @@ export class MacrosController {
     @Req() req: authReq.AuthenticatedRequest,
   ) {
     await this.accessService.assertSelfOrCoach(req.user.id, userId);
-    const result = await this.macrosService.setUserMacros(userId, macros);
+    const result = await this.macrosService.setUserMacros(
+      userId,
+      macros,
+      req.user.id,
+    );
     await this.invalidateMacrosCache(userId);
     return result;
   }

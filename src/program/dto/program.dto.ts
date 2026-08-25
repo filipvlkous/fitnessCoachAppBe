@@ -9,6 +9,7 @@ import {
   ValidateNested,
   Min,
   IsDateString,
+  IsUUID,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -282,6 +283,12 @@ export class LogWorkoutDto {
 }
 
 export class ExerciseSetDto {
+  // Client-generated row id. Present when the set was queued offline, so a
+  // replayed request upserts the same row instead of duplicating it.
+  @IsOptional()
+  @IsUUID()
+  id?: string;
+
   @IsOptional()
   @IsNumber()
   weight: number | null;
@@ -335,6 +342,11 @@ export class CompleteWorkoutDto {
 }
 
 export class LogCardioDto {
+  // Client-generated row id; see ExerciseSetDto.id.
+  @IsOptional()
+  @IsUUID()
+  id?: string;
+
   @IsString()
   workout_log_id: string;
 
