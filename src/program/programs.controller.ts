@@ -47,30 +47,43 @@ export class ProgramsController {
   // keyed by whoever requested them, so a coach reading their client's program
   // has their own copy: pass `viewerId` to clear that one too, otherwise a
   // coach keeps seeing their pre-edit snapshot until the TTL lapses.
+  private userCacheKeys(
+    userId: string | null | undefined,
+    viewerId?: string | null,
+  ): string[] {
+    if (!userId) return [];
+    const reader = viewerId ?? userId;
+    return [
+      userCacheKey(reader, `/programs/users/${userId}/all`),
+      userCacheKey(reader, `/programs/users/${userId}/active`),
+      userCacheKey(reader, `/programs/users/${userId}/activeWeek`),
+      userCacheKey(reader, `/programs/users/${userId}/stats`),
+      userCacheKey(reader, `/programs/users/${userId}/history`),
+      userCacheKey(reader, '/workoutHistory/streak'),
+    ];
+  }
+
+  /**
+   * Delete a set of keys in one shot.
+   *
+   * Issuing every `del` in the same tick matters: node-redis pipelines whatever
+   * it is handed before the next turn of the event loop, so one `Promise.all`
+   * of N keys costs a single round trip to Upstash, while N awaited calls cost
+   * N. Callers therefore collect their keys and delete once at the end rather
+   * than awaiting each group as they go.
+   */
+  private async deleteKeys(keys: string[]) {
+    if (keys.length === 0) return;
+    await Promise.all(
+      [...new Set(keys)].map((key) => this.cacheManager.del(key)),
+    );
+  }
+
   private async invalidateUserCache(
     userId: string | null | undefined,
     viewerId?: string | null,
   ) {
-    if (!userId) return;
-    const reader = viewerId ?? userId;
-    await Promise.all([
-      this.cacheManager.del(
-        userCacheKey(reader, `/programs/users/${userId}/all`),
-      ),
-      this.cacheManager.del(
-        userCacheKey(reader, `/programs/users/${userId}/active`),
-      ),
-      this.cacheManager.del(
-        userCacheKey(reader, `/programs/users/${userId}/activeWeek`),
-      ),
-      this.cacheManager.del(
-        userCacheKey(reader, `/programs/users/${userId}/stats`),
-      ),
-      this.cacheManager.del(
-        userCacheKey(reader, `/programs/users/${userId}/history`),
-      ),
-      this.cacheManager.del(userCacheKey(reader, '/workoutHistory/streak')),
-    ]);
+    await this.deleteKeys(this.userCacheKeys(userId, viewerId));
   }
 
   // Program detail is cached per user, so clear it for every participant.
@@ -116,10 +129,6 @@ export class ProgramsController {
     const coachIds = await this.accessService.getApprovedCoachIds(userId);
     const readers = [...new Set([userId, actorId, ...coachIds])];
 
-    await Promise.all(
-      readers.map((reader) => this.invalidateUserCache(userId, reader)),
-    );
-
     const paths = [`/programs/${programId}`, `/programs/${programId}/progress`];
     for (const day of days) {
       paths.push(`/programs/days/${day.id}`);
@@ -129,10 +138,12 @@ export class ProgramsController {
       }
     }
 
-    await Promise.all([
-      ...paths.map((path) => this.cacheManager.del(path)),
+    // One batch for the whole sweep — see `deleteKeys`.
+    await this.deleteKeys([
+      ...readers.flatMap((reader) => this.userCacheKeys(userId, reader)),
+      ...paths,
       ...readers.flatMap((reader) =>
-        paths.map((path) => this.cacheManager.del(userCacheKey(reader, path))),
+        paths.map((path) => userCacheKey(reader, path)),
       ),
     ]);
   }
@@ -146,32 +157,34 @@ export class ProgramsController {
     const readers = [requesterId];
     if (athleteId && athleteId !== requesterId) readers.push(athleteId);
 
-    const deletions: Promise<unknown>[] = [];
+    // Collected rather than deleted group by group. These four sets are
+    // independent — nothing here reads back what another cleared — so awaiting
+    // them separately only bought three extra round trips to Upstash on a path
+    // seven mutation endpoints share.
+    const keys: string[] = [];
+
     for (const reader of readers) {
-      deletions.push(
-        this.cacheManager.del(userCacheKey(reader, `/programs/days/${dayId}`)),
-      );
+      keys.push(userCacheKey(reader, `/programs/days/${dayId}`));
       // The athlete's workout screen reads the day by program + weekday, so
       // that entry has to go as well or a reorder won't show up in training.
       if (programId && dayNumber != null) {
-        deletions.push(
-          this.cacheManager.del(
-            userCacheKey(
-              reader,
-              `/programs/exercises/${programId}/active/${dayNumber}`,
-            ),
+        keys.push(
+          userCacheKey(
+            reader,
+            `/programs/exercises/${programId}/active/${dayNumber}`,
           ),
         );
       }
     }
-    await Promise.all(deletions);
 
-    await this.invalidateUserCache(requesterId);
+    keys.push(...this.userCacheKeys(requesterId));
     if (athleteId && athleteId !== requesterId) {
       // The athlete's own copies, and the coach's copy of the athlete's data.
-      await this.invalidateUserCache(athleteId);
-      await this.invalidateUserCache(athleteId, requesterId);
+      keys.push(...this.userCacheKeys(athleteId));
+      keys.push(...this.userCacheKeys(athleteId, requesterId));
     }
+
+    await this.deleteKeys(keys);
   }
 
   @UseInterceptors(CacheInterceptor)

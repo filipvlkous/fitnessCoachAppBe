@@ -4,16 +4,32 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { config as dotEnvConfig } from 'dotenv';
 import { ValidationPipe } from '@nestjs/common';
+import compression from 'compression';
 
 dotEnvConfig();
 
 async function bootstrap() {
-  // Disable the default parsers so the 50mb limit below is the only one applied.
+  // Disable the default parsers so the limit below is the only one applied.
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bodyParser: false,
   });
-  app.useBodyParser('json', { limit: '50mb' });
-  app.useBodyParser('urlencoded', { limit: '50mb', extended: true });
+  // Registered before anything else so every response passes through it. The
+  // app's payloads are JSON (program weeks, monthly summaries, the product
+  // feed) and compress by roughly 70-85%, which is what mobile clients on a
+  // cellular connection actually wait on. Defaults are left alone: the 1kb
+  // threshold skips responses too small to be worth a gzip pass, and the
+  // default filter already declines content types that are compressed
+  // already (images, video).
+  app.use(compression());
+
+  // Sized for the one endpoint that posts anything large: a base64 photo to
+  // `image-analysis/food/analyze`, capped at MAX_IMAGE_BASE64_CHARS (10 MB) by
+  // the DTO. The limit sits just above that so an oversized body is rejected
+  // by the parser rather than buffered into memory first — at the previous
+  // 50mb a handful of concurrent uploads could exhaust the container. File
+  // uploads are multipart and go through multer's own limits, untouched here.
+  app.useBodyParser('json', { limit: '12mb' });
+  app.useBodyParser('urlencoded', { limit: '12mb', extended: true });
 
   app.useGlobalPipes(
     new ValidationPipe({

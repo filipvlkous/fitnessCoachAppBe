@@ -7,6 +7,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  MaxLength,
   ValidateNested,
 } from 'class-validator';
 
@@ -19,10 +20,22 @@ import {
 export const FOOD_UNITS = ['g', 'ml'] as const;
 export type FoodUnit = (typeof FOOD_UNITS)[number];
 
+/**
+ * Base64 inflates by a third, so this is roughly a 7.5 MB source image —
+ * comfortably above what any phone camera produces at full resolution, and
+ * bounded enough that concurrent scans cannot exhaust the container's memory.
+ * The body parser in `main.ts` is capped just above it so an oversized upload
+ * is refused before it is ever buffered.
+ */
+export const MAX_IMAGE_BASE64_CHARS = 10 * 1024 * 1024;
+
 export class AnalyzeFoodDto {
   // e.g. "data:image/png;base64,iVBORw0KGgoAAAANS…"
   @IsString()
   @IsNotEmpty()
+  @MaxLength(MAX_IMAGE_BASE64_CHARS, {
+    message: 'Image is too large; send a photo under roughly 7 MB.',
+  })
   imageBase64: string;
 }
 

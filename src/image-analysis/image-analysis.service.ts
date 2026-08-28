@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 // import { GoogleGenerativeAI } from '@google/generative-ai';
 import { GoogleGenAI, Type } from '@google/genai';
+import sharp from 'sharp';
 import { AnalyzeFoodResponseDto } from './dto/image.dto';
 
 /** Per 100 g (or 100 ml) — the form nutrition tables and food databases use. */
@@ -56,11 +57,40 @@ export interface MealAnalysis {
 @Injectable()
 export class ImageAnalysisService {
   private genAI: GoogleGenAI;
-  private readonly MAX_RETRIES = 5;
-  private readonly INITIAL_DELAY_MS = 5000;
+  // A person is watching a scanning animation while these run, so the budget
+  // is set by how long they will wait, not by how long Gemini might take to
+  // recover. Three retries at 1s/2s/4s spend at most ~7s of sleep before the
+  // request fails and the app can offer to try again — the previous 5 retries
+  // at 5s/10s/20s/40s/80s held the connection open for 2.6 minutes.
+  private readonly MAX_RETRIES = 3;
+  private readonly INITIAL_DELAY_MS = 1000;
 
   constructor() {
     this.genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  }
+
+  /**
+   * Whether another attempt could plausibly succeed.
+   *
+   * `ApiError` from `@google/genai` carries the HTTP `status`. A 4xx means the
+   * request itself is wrong — a malformed prompt, an unreadable image, a bad
+   * API key — and replaying it byte for byte produces the same 4xx, so the
+   * only thing retrying buys is a slower error. 429 is the exception: the
+   * request is fine, we are just early. Anything with no status at all is a
+   * transport failure (DNS, reset connection, timeout) and is worth a retry.
+   */
+  /** `ApiError`'s status, when the thrown value carries one. */
+  private static statusOf(error: unknown): number | null {
+    if (typeof error !== 'object' || error === null) return null;
+    const status = (error as { status?: unknown }).status;
+    return typeof status === 'number' ? status : null;
+  }
+
+  private isRetryable(error: unknown): boolean {
+    const status = ImageAnalysisService.statusOf(error);
+    if (status === null) return true; // network/transport failure
+    if (status === 408 || status === 429) return true;
+    return status >= 500 && status < 600;
   }
 
   private async retryWithExponentialBackoff<T>(
@@ -69,18 +99,60 @@ export class ImageAnalysisService {
   ): Promise<T> {
     try {
       return await fn();
-    } catch (error: any) {
-      if (retries >= this.MAX_RETRIES) {
+    } catch (error: unknown) {
+      if (retries >= this.MAX_RETRIES || !this.isRetryable(error)) {
         throw error;
       }
 
-      const delayMs = this.INITIAL_DELAY_MS * Math.pow(2, retries);
+      // Jittered so a burst of scans that all hit the same rate limit do not
+      // then retry in lockstep and rebuild the burst.
+      const backoff = this.INITIAL_DELAY_MS * Math.pow(2, retries);
+      const delayMs = Math.round(backoff * (0.5 + Math.random() * 0.5));
       console.warn(
-        `API call failed, retrying in ${delayMs}ms (attempt ${retries + 1}/${this.MAX_RETRIES})`,
+        `Gemini call failed (status ${ImageAnalysisService.statusOf(error) ?? 'none'}), retrying in ${delayMs}ms (attempt ${retries + 1}/${this.MAX_RETRIES})`,
       );
       await new Promise((resolve) => setTimeout(resolve, delayMs));
 
       return this.retryWithExponentialBackoff(fn, retries + 1);
+    }
+  }
+
+  /**
+   * Shrink a photo before it goes to Gemini.
+   *
+   * A phone posts a full-resolution capture — around 4032x3024, ~3.8 MB — and
+   * every byte of it is then uploaded again from this server to Google, which
+   * is dead time the user spends watching the scanning animation. Resizing to
+   * 1568px costs ~50ms of CPU here and removes ~94% of that second upload.
+   *
+   * 1568 rather than something smaller because this same call reads nutrition
+   * tables off packaging (`kind: 'label'`), and that is an OCR job: the label
+   * is often a fraction of the frame, so resolution is accuracy. Meal photos
+   * would tolerate far less.
+   *
+   * Best effort — a buffer sharp cannot decode is handed to Gemini untouched
+   * rather than failing the scan, matching how uploads elsewhere behave.
+   */
+  private async downscaleForModel(rawBase64: string): Promise<string> {
+    try {
+      const input = Buffer.from(rawBase64, 'base64');
+      const resized = await sharp(input)
+        .rotate() // honour EXIF orientation; stripped with the rest of the metadata
+        .resize(1568, 1568, { fit: 'inside', withoutEnlargement: true })
+        .jpeg({ quality: 85 })
+        .toBuffer();
+
+      // Never hand back something larger than what arrived (already-small or
+      // already-optimised images can grow through a re-encode).
+      if (resized.length >= input.length) return rawBase64;
+
+      return resized.toString('base64');
+    } catch (error: unknown) {
+      console.warn(
+        'Image downscale failed, sending original to Gemini:',
+        error instanceof Error ? error.message : error,
+      );
+      return rawBase64;
     }
   }
 
@@ -141,7 +213,9 @@ export class ImageAnalysisService {
    */
   async analyzeImage(base64: string): Promise<MealAnalysis | null> {
     try {
-      const rawBase64 = base64.includes(',') ? base64.split(',')[1] : base64;
+      const rawBase64 = await this.downscaleForModel(
+        base64.includes(',') ? base64.split(',')[1] : base64,
+      );
 
       const per100Schema = {
         type: Type.OBJECT,
