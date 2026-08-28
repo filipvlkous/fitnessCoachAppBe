@@ -89,6 +89,9 @@ export class ExercisesController {
 
     // Delete both possible key patterns to be safe
     await this.cacheManager.del(`/exercises/${id}`);
+    // youtube_url is edited through here but read through /media, so this path
+    // has to drop the media entry too — same as upload-media and delete-media.
+    await this.cacheManager.del(`/exercises/${id}/media`);
     await this.cacheManager.del('/exercises');
   }
 

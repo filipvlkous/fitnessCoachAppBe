@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { CacheModule } from '@nestjs/cache-manager';
 import { ScheduleModule } from '@nestjs/schedule';
-import { redisStore } from 'cache-manager-redis-yet';
+import KeyvRedis from '@keyv/redis';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { SupabaseModule } from './supabase/supabase.module';
@@ -25,14 +25,21 @@ import { JoinModule } from './join/join.module';
   imports: [
     CacheModule.registerAsync({
       isGlobal: true,
-      useFactory: async () => {
+      useFactory: () => {
         if (!process.env.UPSTASH_REDIS_URL) {
           throw new Error(
             'UPSTASH_REDIS_URL is not set. Configure it in the server environment.',
           );
         }
         const redisUrl = new URL(process.env.UPSTASH_REDIS_URL);
-        const store = await redisStore({
+
+        // `@keyv/redis` is the adapter for cache-manager v6+. The older
+        // `cache-manager-redis-yet` + `{ store }` shape is a v5 API: this
+        // module reads `stores` (plural), so a `store` key was silently
+        // ignored and every cache entry lived in a per-process Map instead of
+        // Redis — invalidation then only ever cleared the instance that
+        // handled the write.
+        const store = new KeyvRedis({
           password: redisUrl.password,
           socket: {
             host: redisUrl.hostname,
@@ -41,15 +48,14 @@ import { JoinModule } from './join/join.module';
             // Retry with backoff so transient DNS/network blips don't kill the client.
             reconnectStrategy: (retries) => Math.min(retries * 200, 5000),
           },
-          ttl: 60 * 1000, // default 60s in ms
         });
 
         // Log connection errors instead of letting them crash the process.
-        store.client.on('error', (err) => {
+        store.on('error', (err) => {
           console.error('Redis Connection Error:', err);
         });
 
-        return { store };
+        return { stores: [store], ttl: 60 * 1000 };
       },
     }),
 

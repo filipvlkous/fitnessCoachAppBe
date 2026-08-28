@@ -1,5 +1,9 @@
 // src/exercises/exercises.service.ts
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import {
   CreateExerciseDto,
@@ -16,11 +20,92 @@ export class ExercisesService {
     return this.supabaseService.getClient();
   }
 
+  // Every shape a coach might paste, down to the 11-character video id:
+  // watch?v=, youtu.be/, /shorts/, /embed/, /live/, with or without the www or
+  // m/music subdomain, and with any of the tracking params YouTube's share
+  // sheet appends. `list=` playlist ids are 13+ chars and never match.
+  private static readonly YOUTUBE_ID = /^[A-Za-z0-9_-]{11}$/;
+  private static readonly YOUTUBE_PATH_PREFIXES = [
+    'shorts',
+    'embed',
+    'live',
+    'v',
+    'e',
+  ];
+
+  private extractYouTubeId(raw: string): string | null {
+    // A bare id, e.g. pasted out of another tool. Checked before URL parsing
+    // because `new URL('https://dQw4w9WgXcQ')` succeeds — as a hostname.
+    if (ExercisesService.YOUTUBE_ID.test(raw)) return raw;
+
+    let parsed: URL;
+    try {
+      // A pasted link often arrives without a scheme ("youtu.be/abc").
+      parsed = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+    } catch {
+      return null;
+    }
+
+    const host = parsed.hostname.replace(/^www\./i, '').toLowerCase();
+    const segments = parsed.pathname.split('/').filter(Boolean);
+
+    if (host === 'youtu.be') {
+      const id = segments[0];
+      return id && ExercisesService.YOUTUBE_ID.test(id) ? id : null;
+    }
+
+    if (
+      host !== 'youtube.com' &&
+      host !== 'youtube-nocookie.com' &&
+      host !== 'm.youtube.com' &&
+      host !== 'music.youtube.com'
+    ) {
+      return null;
+    }
+
+    const queryId = parsed.searchParams.get('v');
+    if (queryId && ExercisesService.YOUTUBE_ID.test(queryId)) return queryId;
+
+    if (
+      segments.length >= 2 &&
+      ExercisesService.YOUTUBE_PATH_PREFIXES.includes(segments[0].toLowerCase())
+    ) {
+      const id = segments[1];
+      return ExercisesService.YOUTUBE_ID.test(id) ? id : null;
+    }
+
+    return null;
+  }
+
+  // `undefined` in, `undefined` out: the field was not part of the request and
+  // must not be written. An empty string is how the app clears the link, and
+  // becomes an explicit null. Anything else has to be a real YouTube link —
+  // rejected here rather than saved and rendered as a blank player later.
+  private normalizeYouTubeUrl(
+    value: string | undefined,
+  ): string | null | undefined {
+    if (value === undefined) return undefined;
+
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+
+    if (!this.extractYouTubeId(trimmed)) {
+      throw new BadRequestException(
+        'youtube_url must be a YouTube video link (e.g. https://youtu.be/dQw4w9WgXcQ)',
+      );
+    }
+
+    // Stored as pasted so a `?t=` start offset survives; the app re-parses it.
+    return trimmed;
+  }
+
   // Create a new exercise
   async create(dto: CreateExerciseDto): Promise<{ id: string }> {
+    const youtube_url = this.normalizeYouTubeUrl(dto.youtube_url);
+
     const { data, error } = await this.supabase
       .from('exercises')
-      .insert(dto)
+      .insert(youtube_url === undefined ? dto : { ...dto, youtube_url })
       .select('id')
       .single();
 
@@ -57,9 +142,11 @@ export class ExercisesService {
 
   // Update exercise
   async update(id: string, dto: UpdateExerciseCatalogDto) {
+    const youtube_url = this.normalizeYouTubeUrl(dto.youtube_url);
+
     const { error } = await this.supabase
       .from('exercises')
-      .update(dto)
+      .update(youtube_url === undefined ? dto : { ...dto, youtube_url })
       .eq('id', id);
 
     if (error) throw new Error(error.message);
@@ -137,11 +224,13 @@ export class ExercisesService {
     const { data, error } = await this.supabase
       .from('exercises')
       .select(
+        // The YouTube link rides along with the video selection: both feed the
+        // same "video" section in the app, and the logger asks for type=video.
         type === 'both'
-          ? 'img_url, video_url'
+          ? 'img_url, video_url, youtube_url'
           : type === 'image'
             ? 'img_url'
-            : 'video_url',
+            : 'video_url, youtube_url',
       )
       .eq('id', exerciseId)
       .single();

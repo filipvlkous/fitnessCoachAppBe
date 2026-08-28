@@ -46,6 +46,35 @@ export class AccessService {
     return relation !== null;
   }
 
+  /**
+   * Every coach holding an approved relation to this user.
+   *
+   * Cache entries are keyed by *requester* (see `UserScopedCacheInterceptor`),
+   * so invalidating a user's data means clearing the copy each of their
+   * coaches may be holding too, not just the user's own.
+   */
+  async getApprovedCoachIds(userId: string): Promise<string[]> {
+    if (!userId) return [];
+
+    const { data, error } = await this.supabase
+      .from('coach_user_relations')
+      .select('coach_id')
+      .eq('user_id', userId)
+      .eq('status', 'approved')
+      .returns<{ coach_id: string | null }[]>();
+
+    if (error) {
+      // The write this follows has already succeeded; failing the request over
+      // a cache sweep would be worse than a coach seeing a stale minute.
+      console.error('Failed to list approved coaches:', error);
+      return [];
+    }
+
+    return (data ?? [])
+      .map((row) => row.coach_id)
+      .filter((id): id is string => !!id);
+  }
+
   async assertSelfOrCoach(
     requesterId: string,
     targetUserId: string,
@@ -79,6 +108,24 @@ export class AccessService {
     if (!data) throw new NotFoundException('Plan not found');
     if (data.coach_id !== requesterId) {
       throw new ForbiddenException('You do not own this plan');
+    }
+  }
+
+  /** Assert the requester owns the given program preset (a week template). */
+  async assertPresetOwner(
+    requesterId: string,
+    presetId: string,
+  ): Promise<void> {
+    const { data, error } = await this.supabase
+      .from('coach_program_presets')
+      .select('coach_id')
+      .eq('id', presetId)
+      .maybeSingle();
+
+    this.failOnQueryError(error);
+    if (!data) throw new NotFoundException('Preset not found');
+    if (data.coach_id !== requesterId) {
+      throw new ForbiddenException('You do not own this preset');
     }
   }
 

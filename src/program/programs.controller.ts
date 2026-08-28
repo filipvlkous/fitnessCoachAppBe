@@ -96,6 +96,47 @@ export class ProgramsController {
     );
   }
 
+  /**
+   * Every cached copy of one program, across everyone allowed to read it.
+   *
+   * `UserScopedCacheInterceptor` keys entries by the *requester*, so a coach
+   * renaming or deleting their client's program has to clear the client's
+   * copies and their own — and those of any other approved coach. Clearing
+   * only the athlete's scope left the coach looking at the pre-edit snapshot
+   * for the rest of the TTL.
+   */
+  private async invalidateProgramForEveryone(
+    userId: string | null | undefined,
+    actorId: string,
+    programId: string,
+    days: { id: string; day_number: number | null }[] = [],
+  ) {
+    if (!userId) return;
+
+    const coachIds = await this.accessService.getApprovedCoachIds(userId);
+    const readers = [...new Set([userId, actorId, ...coachIds])];
+
+    await Promise.all(
+      readers.map((reader) => this.invalidateUserCache(userId, reader)),
+    );
+
+    const paths = [`/programs/${programId}`, `/programs/${programId}/progress`];
+    for (const day of days) {
+      paths.push(`/programs/days/${day.id}`);
+      // The athlete's training screen reads a day by program + weekday.
+      if (day.day_number != null) {
+        paths.push(`/programs/exercises/${programId}/active/${day.day_number}`);
+      }
+    }
+
+    await Promise.all([
+      ...paths.map((path) => this.cacheManager.del(path)),
+      ...readers.flatMap((reader) =>
+        paths.map((path) => this.cacheManager.del(userCacheKey(reader, path))),
+      ),
+    ]);
+  }
+
   private async invalidateDayCache(requesterId: string, dayId: string) {
     const { athleteId, programId, dayNumber } =
       await this.programsService.getDayContext(dayId);
@@ -166,7 +207,11 @@ export class ProgramsController {
     }
 
     const result = await this.programsService.createUserProgram(createDto);
-    await this.invalidateUserCache(createDto.user_id);
+    await this.invalidateProgramForEveryone(
+      createDto.user_id,
+      req.user.id,
+      result?.id as string,
+    );
     await this.invalidateCoachCache(createDto.coach_id);
     return result;
   }
@@ -199,12 +244,11 @@ export class ProgramsController {
       updateDto,
     );
 
-    await this.invalidateProgramCache(
-      programId,
+    await this.invalidateProgramForEveryone(
       result?.user_id,
-      result?.coach_id,
+      req.user.id,
+      programId,
     );
-    await this.invalidateUserCache(result?.user_id);
     await this.invalidateCoachCache(result?.coach_id);
     return result;
   }
@@ -216,12 +260,14 @@ export class ProgramsController {
   ) {
     await this.accessService.assertProgramAccess(req.user.id, programId);
     const result = await this.programsService.deleteProgram(programId);
-    await this.invalidateProgramCache(
-      programId,
+    // The days come back from the delete: their cache entries have to go too,
+    // or the athlete's training screen keeps serving a program that is gone.
+    await this.invalidateProgramForEveryone(
       result.user_id,
-      result.coach_id,
+      req.user.id,
+      programId,
+      result.days,
     );
-    await this.invalidateUserCache(result.user_id);
     await this.invalidateCoachCache(result.coach_id);
     return result;
   }

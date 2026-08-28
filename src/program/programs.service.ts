@@ -1,6 +1,7 @@
 // src/programs/programs.service.ts
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   InternalServerErrorException,
   NotFoundException,
@@ -138,10 +139,30 @@ export class ProgramsService {
   async createUserProgram(dto: CreateUserProgramDto) {
     const { days, ...programData } = dto;
 
-    // 1. Create the program
+    // A user with two active programs breaks every "the active program" read
+    // below (they all take the first of an arbitrary order), so the second one
+    // is refused rather than silently created. `approveUser` and
+    // `createSoloProgram` guard the same way.
+    const { data: existingActive, error: existingError } = await this.supabase
+      .from('user_workout_programs')
+      .select('id')
+      .eq('user_id', dto.user_id)
+      .eq('status', 'active')
+      .limit(1)
+      .maybeSingle();
+
+    if (existingError) {
+      throw new InternalServerErrorException(existingError.message);
+    }
+    if (existingActive) {
+      throw new ConflictException('This user already has an active program');
+    }
+
+    // 1. Create the program. `status` is set here rather than left to the
+    //    column default: an athlete's screens only ever read active programs.
     const { data: program, error: programError } = await this.supabase
       .from('user_workout_programs')
-      .insert(programData)
+      .insert({ ...programData, status: 'active' })
       .select()
       .single();
 
@@ -285,13 +306,50 @@ export class ProgramsService {
     return data;
   }
 
-  // Delete program (returns owner IDs so the controller can invalidate their caches)
+  /**
+   * Delete a program and everything hanging off it.
+   *
+   * Returns the owner IDs so the controller can invalidate their caches, plus
+   * the days it removed so the per-day cache entries can go with them.
+   *
+   * The children are deleted explicitly, in dependency order, rather than left
+   * to the database: `workout_logs` and `user_program_days` both point at the
+   * program, and whether those foreign keys cascade is not something this repo
+   * can see (the schema lives in Supabase). Without this, deleting a program a
+   * client had ever trained on would fail with a foreign-key violation and
+   * surface as a 500.
+   */
   async deleteProgram(programId: string) {
     const { data: program } = await this.supabase
       .from('user_workout_programs')
       .select('user_id, coach_id')
       .eq('id', programId)
       .maybeSingle();
+
+    if (!program) throw new NotFoundException('Program not found');
+
+    // Kept for the controller: the day cache is keyed by id and by weekday.
+    const { data: days } = await this.supabase
+      .from('user_program_days')
+      .select('id, day_number')
+      .eq('program_id', programId);
+
+    // Sessions first — they reference both the program and its days.
+    const { error: logsError } = await this.supabase
+      .from('workout_logs')
+      .delete()
+      .eq('user_workout_program_id', programId);
+
+    if (logsError) throw new InternalServerErrorException(logsError.message);
+
+    // Then the days, which take their assigned exercises with them (same
+    // cascade `deleteProgramDay` relies on).
+    const { error: daysError } = await this.supabase
+      .from('user_program_days')
+      .delete()
+      .eq('program_id', programId);
+
+    if (daysError) throw new InternalServerErrorException(daysError.message);
 
     const { error } = await this.supabase
       .from('user_workout_programs')
@@ -301,8 +359,9 @@ export class ProgramsService {
     if (error) throw new InternalServerErrorException(error.message);
     return {
       message: 'Program deleted successfully',
-      user_id: program?.user_id ?? null,
-      coach_id: program?.coach_id ?? null,
+      user_id: program.user_id ?? null,
+      coach_id: program.coach_id ?? null,
+      days: (days ?? []) as { id: string; day_number: number | null }[],
     };
   }
 

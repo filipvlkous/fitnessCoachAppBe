@@ -4,27 +4,14 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import {
+  ingredientRows,
+  mealTotals,
+  type MealItemInput,
+} from 'utils/mealTotals';
 
-type FoodItem = {
-  name: string;
-  calories: number;
-  carbs: number;
-  fat: number;
-  protein: number;
-  weight: number;
-  /** 'g' or 'ml'; anything else (including absent) is stored as grams. */
-  unit?: string;
-  nutritionScore: number;
-  /**
-   * How the amount reads to a person — "🍳 2 kusy (100 g)". Set by the photo
-   * scan; absent for the manual food form, which has no serving concept, and
-   * for anything logged before these columns existed.
-   */
-  emoji?: string;
-  servings?: number;
-  servingLabel?: string;
-  servingGrams?: number;
-};
+/** Shape of one logged ingredient. Shared with the meal editor. */
+type FoodItem = MealItemInput;
 
 @Injectable()
 export class SupabaseService {
@@ -105,27 +92,7 @@ export class SupabaseService {
     }
     if (parsed.foodArray.length === 0) return;
 
-    const totals = parsed.foodArray.reduce(
-      (acc, item) => ({
-        total_calories: Math.round(acc.total_calories + (item.calories || 0)),
-        total_carbs: Math.round(acc.total_carbs + (item.carbs || 0)),
-        total_fat: Math.round(acc.total_fat + (item.fat || 0)),
-        total_protein: Math.round(acc.total_protein + (item.protein || 0)),
-        // Amounts are summed regardless of unit: a dish mixing 200 g of rice
-        // with 300 ml of milk has no single meaningful total, so clients that
-        // care read the per-ingredient units instead.
-        total_weight: Math.round(acc.total_weight + (item.weight || 0)),
-        item_count: acc.item_count + 1,
-      }),
-      {
-        total_calories: 0,
-        total_carbs: 0,
-        total_fat: 0,
-        total_protein: 0,
-        total_weight: 0,
-        item_count: 0,
-      },
-    );
+    const totals = mealTotals(parsed.foodArray);
 
     const { data: mealRow, error: mealErr } = await this.supabase
       .from('meals')
@@ -142,28 +109,7 @@ export class SupabaseService {
 
     if (mealErr) throw new InternalServerErrorException(mealErr.message);
 
-    // One decimal, not a whole number: a 5 g pinch of herbs is 0.1 g of
-    // protein, and rounding that to 0 made the ingredient rows fail to add up
-    // to the meal's own totals.
-    const round1 = (n: number) => Math.round((n || 0) * 10) / 10;
-
-    const ingredients = parsed.foodArray.map((i) => ({
-      meal_id: mealRow.id,
-      name: i.name,
-      weight: Math.round(i.weight || 0),
-      unit: i.unit === 'ml' ? 'ml' : 'g',
-      protein: round1(i.protein),
-      fat: round1(i.fat),
-      carbs: round1(i.carbs),
-      calories: Math.round(i.calories || 0),
-      nutritionScore: Math.round(i.nutritionScore || 0),
-      // Null rather than a default: the history distinguishes "logged as 2
-      // kusy" from "logged as a plain weight" and renders them differently.
-      emoji: i.emoji ?? null,
-      servings: i.servings ?? null,
-      serving_label: i.servingLabel ?? null,
-      serving_grams: i.servingGrams ?? null,
-    }));
+    const ingredients = ingredientRows(mealRow.id, parsed.foodArray);
 
     const { error: ingErr } = await this.supabase
       .from('meal_ingredients')

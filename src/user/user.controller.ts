@@ -203,6 +203,18 @@ export class UserController {
     }
   }
 
+  // The client may have no program at all — a coach can delete it from the
+  // planning screen — so the relation can also be removed without naming one.
+  // Declared first: its literal `user` segment must not be read as a program id.
+  @Delete('coach-relation/user/:userId')
+  async removeCoachRelation(
+    @Param('userId') userId: string,
+    @Req() req: authReq.AuthenticatedRequest,
+  ) {
+    await this.accessService.assertSelfOrCoach(req.user.id, userId);
+    return this.userService.removeCoachRelationByUserId(userId);
+  }
+
   @Delete('coach-relation/:programId/user/:userId')
   async removeCoachRelationByUserId(
     @Param('programId') programId: string,
