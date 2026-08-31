@@ -20,6 +20,7 @@ import { MonthlySummaryModule } from './monthly-summary/monthly-summary.module';
 import { CoachPlansModule } from './coach-plans/coach-plans.module';
 import { ChatModule } from './chat/chat.module';
 import { JoinModule } from './join/join.module';
+import { MeetingsModule } from './meetings/meetings.module';
 
 @Module({
   imports: [
@@ -76,6 +77,7 @@ import { JoinModule } from './join/join.module';
     CoachPlansModule,
     ChatModule,
     JoinModule,
+    MeetingsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

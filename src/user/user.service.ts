@@ -307,6 +307,23 @@ export class UserService {
   }
 
   async removeCoachRelationByUserId(userId: string, programId?: string) {
+    // The chat goes with the relation. This removes every relation the user
+    // has, and `chat_messages` is keyed by the coach/client pair rather than by
+    // the relation row, so every message where they are the client belongs to a
+    // relation about to disappear. Deleted first: a failure here leaves the
+    // relation in place and the call retryable, where messages left behind
+    // would resurface in the chat if the two ever connect again.
+    const { error: chatError } = await this.supabaseService.supabase
+      .from('chat_messages')
+      .delete()
+      .eq('user_id', userId);
+
+    if (chatError) {
+      throw new InternalServerErrorException(
+        `Error removing chat history: ${chatError.message}`,
+      );
+    }
+
     const { data, error } = await this.supabaseService.supabase
       .from('coach_user_relations')
       .delete()
