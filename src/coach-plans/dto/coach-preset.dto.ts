@@ -16,7 +16,9 @@ export class PresetDayDto {
   @IsString()
   plan_id: string;
 
-  // 1 = Monday … 7 = Sunday, matching `user_program_days.day_number`.
+  // 1 = Monday … 7 = Sunday. A preset is a *week*, so it stops at Sunday —
+  // `user_program_days.day_number` goes further (8 and up are bonus days), but
+  // those are added straight onto a client's program, never saved into a preset.
   @IsNumber()
   @Min(1)
   @Max(7)

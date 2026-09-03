@@ -145,9 +145,10 @@ export class CoachPlansService {
   // ASSIGNMENT (COACH -> STUDENT)
   // ============================================
 
-  // Copy a plan into a student's program as a new day on the given weekday
-  // slot (day_number 1–7). Snapshot: the copied day is independent of the
-  // template from this point on; source_plan_id is stored as provenance only.
+  // Copy a plan into a student's program as a new day on the given slot
+  // (day_number 1–7 for a weekday, 8 and up for a bonus day). Snapshot: the
+  // copied day is independent of the template from this point on;
+  // source_plan_id is stored as provenance only.
   // Authorization (coach owns plan AND coaches this student) is enforced in the
   // controller via AccessService before this runs.
   async assignPlanToStudent(
@@ -158,8 +159,9 @@ export class CoachPlansService {
     const plan = await this.getPlan(planId);
     const programId = await this.resolveTargetProgram(coachId, dto);
 
-    // One day per weekday slot: the recurring-week calendar renders a single
-    // day per chip, so a second row on the same slot would be inaccessible.
+    // One day per slot: the calendar renders a single day per chip, so a second
+    // row on the same slot would be inaccessible. An extra session goes on a
+    // bonus slot of its own, not on top of an occupied one.
     const { data: existing, error: existingError } = await this.supabase
       .from('user_program_days')
       .select('id')
@@ -173,7 +175,7 @@ export class CoachPlansService {
     }
     if (existing) {
       throw new ConflictException(
-        'This weekday already has a workout in the program',
+        'This day already has a workout in the program',
       );
     }
 

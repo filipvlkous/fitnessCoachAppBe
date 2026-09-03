@@ -49,6 +49,15 @@ export class CreateMeetingDto {
   @Max(240)
   durationMinutes?: number;
 
+  /**
+   * The coach service being booked, copied from their price list. Optional:
+   * a coach with no price list still takes plain requests.
+   */
+  @IsOptional()
+  @IsString()
+  @Length(1, 120)
+  service?: string;
+
   @IsOptional()
   @IsString()
   @Length(1, 200)
@@ -94,6 +103,8 @@ export interface MeetingView {
   startsAt: string;
   proposedStartsAt: string | null;
   durationMinutes: number;
+  /** What was booked, as it was named when the request was made. */
+  service: string | null;
   location: string | null;
   note: string | null;
   status: MeetingStatus;

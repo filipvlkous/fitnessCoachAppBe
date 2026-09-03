@@ -80,6 +80,14 @@ export class UpdatePlanDto {
   exercises?: PlanExerciseDto[];
 }
 
+// Weekday slots are 1 (Monday) … 7 (Sunday). Numbers above 7 are bonus days —
+// extra sessions that hang off the end of the week instead of sitting on a
+// calendar day. 14 is the ceiling: it is here because the DTO needs an upper
+// bound, not because the app has a reason to stop there. The app names the same
+// number in `utils/programDays.ts`, and the column's check constraint in
+// `sql/2026-09-03_program_bonus_days.sql`.
+export const MAX_PROGRAM_DAY_NUMBER = 14;
+
 // Attach a coach's plan to one of that coach's students.
 export class AssignPlanDto {
   @IsString()
@@ -96,11 +104,11 @@ export class AssignPlanDto {
   @Min(1)
   week_number?: number;
 
-  // Weekday slot (1 = Monday … 7 = Sunday). The recurring-week calendar can
-  // only render 1–7, so the client must always send the selected weekday.
+  // The slot to write: 1 (Monday) … 7 (Sunday), or 8 and up for a bonus day.
+  // The calendar cannot infer it, so the client always sends the selected slot.
   @IsNumber()
   @Min(1)
-  @Max(7)
+  @Max(MAX_PROGRAM_DAY_NUMBER)
   day_number: number;
 
   // Overrides the plan name for this day; defaults to the plan's name.

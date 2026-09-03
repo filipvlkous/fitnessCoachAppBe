@@ -4,8 +4,10 @@ import {
   ForbiddenException,
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { SupabaseService } from 'src/supabase/supabase.service';
 import { AccessService } from 'src/auth/access.service';
 import { NotificationsService } from 'src/notifications/notifications.service';
@@ -15,6 +17,7 @@ import {
   MeetingView,
   RespondMeetingDto,
 } from './dto/meeting.dto';
+import { COACH_TZ } from './dto/availability.dto';
 
 interface MeetingRow {
   id: string;
@@ -23,11 +26,13 @@ interface MeetingRow {
   starts_at: string;
   proposed_starts_at: string | null;
   duration_minutes: number;
+  service: string | null;
   location: string | null;
   note: string | null;
   status: MeetingStatus;
   decline_reason: string | null;
   cancelled_by: string | null;
+  reminded_at: string | null;
   created_at: string;
 }
 
@@ -54,6 +59,17 @@ const MAX_LEAD_DAYS = 180;
 const DECLINE_VISIBLE_HOURS = 24;
 
 /**
+ * How far ahead of a session its reminder goes out.
+ *
+ * The job ticks hourly, so the push lands one to two hours before the slot.
+ * That is deliberately loose: a training session is not something you need
+ * warned about to the minute, and an afternoon is still yours to rearrange an
+ * hour out. A minute-accurate reminder would mean running the job sixty times
+ * as often for a difference nobody would notice.
+ */
+const REMINDER_LEAD_MINUTES = 120;
+
+/**
  * In-person training sessions between a coach and their client.
  *
  * The client asks; the coach approves, declines, or puts a different time
@@ -63,6 +79,8 @@ const DECLINE_VISIBLE_HOURS = 24;
  */
 @Injectable()
 export class MeetingsService {
+  private readonly logger = new Logger(MeetingsService.name);
+
   constructor(
     private readonly supabaseService: SupabaseService,
     private readonly accessService: AccessService,
@@ -88,6 +106,7 @@ export class MeetingsService {
         client_id: clientId,
         starts_at: startsAt.toISOString(),
         duration_minutes: dto.durationMinutes ?? DEFAULT_DURATION_MINUTES,
+        service: dto.service ?? null,
         location: dto.location ?? (await this.coachGym(coachId)),
         note: dto.note ?? null,
       })
@@ -131,6 +150,8 @@ export class MeetingsService {
       now.getTime() - DECLINE_VISIBLE_HOURS * 60 * 60 * 1000,
     ).toISOString();
 
+    // The second filter is what keeps availability windows out: they hold none
+    // of these statuses, and the two `or` groups are ANDed together.
     const { data, error } = await this.supabase
       .from('gym_meetings')
       .select('*')
@@ -220,12 +241,20 @@ export class MeetingsService {
         patch.starts_at = row.proposed_starts_at;
         patch.proposed_starts_at = null;
       }
+      const startsIn =
+        new Date(patch.starts_at ?? row.starts_at).getTime() - Date.now();
       // An approval that lands after the slot has passed helps nobody, and it
       // would put a calendar entry in the past on both devices.
-      if (new Date(patch.starts_at ?? row.starts_at).getTime() <= Date.now()) {
+      if (startsIn <= 0) {
         throw new BadRequestException(
           'That time has already passed. Propose a new one instead.',
         );
+      }
+      // An approval this close to the slot *is* the reminder. Claiming the row
+      // here is what stops the job pushing a second time about a session the
+      // two sides agreed on twenty minutes ago.
+      if (startsIn <= REMINDER_LEAD_MINUTES * 60 * 1000) {
+        patch.reminded_at = now;
       }
     } else if (dto.action === 'decline') {
       patch.status = 'declined';
@@ -319,6 +348,78 @@ export class MeetingsService {
     );
   }
 
+  /**
+   * Tells both sides about a session that is about to start.
+   *
+   * The only notification here that hangs off the clock rather than off
+   * someone tapping something: between the approval and the session itself
+   * nothing is said, and by then the approval push can be days old.
+   *
+   * Both parties get it, not just the client. A coach's day is made of these,
+   * and the one who has five today is no more able to keep them all in their
+   * head than the client with one.
+   */
+  @Cron('0 * * * *')
+  async remindUpcoming(): Promise<void> {
+    const now = new Date();
+    const until = new Date(now.getTime() + REMINDER_LEAD_MINUTES * 60 * 1000);
+
+    // Claimed and read in one statement. A select followed by an update would
+    // leave a window in which a second instance — or the next tick, after a
+    // slow run — reads the same rows and pushes again; `reminded_at is null`
+    // inside the update means only one caller can ever come away with a row.
+    const { data, error } = await this.supabase
+      .from('gym_meetings')
+      .update({ reminded_at: now.toISOString() })
+      .eq('status', 'approved')
+      .is('reminded_at', null)
+      .gt('starts_at', now.toISOString())
+      .lte('starts_at', until.toISOString())
+      .select('*')
+      .returns<MeetingRow[]>();
+
+    if (error) {
+      // Nothing is retried: the rows stayed unclaimed, so the next tick picks
+      // up whatever is still inside the window.
+      this.logger.error(`Meeting reminders failed: ${error.message}`);
+      return;
+    }
+
+    const rows = data ?? [];
+    if (rows.length === 0) return;
+
+    let names = new Map<string, string>();
+    try {
+      names = await this.displayNames([
+        ...new Set(rows.flatMap((row) => [row.coach_id, row.client_id])),
+      ]);
+    } catch {
+      // Generic names still make the message readable.
+    }
+
+    for (const row of rows) {
+      const slot = this.formatSlot(row.starts_at);
+      const label = this.sessionLabel(row, 'Trénink');
+
+      for (const recipientId of [row.coach_id, row.client_id]) {
+        const isCoach = recipientId === row.coach_id;
+        const peerId = isCoach ? row.client_id : row.coach_id;
+        const peerName =
+          names.get(peerId) ?? (isCoach ? 'klientem' : 'trenérem');
+
+        this.notificationsService.notifyUser(recipientId, {
+          title: 'Blíží se trénink',
+          body: `${label} s ${peerName} začíná ${slot}.`,
+          data: {
+            type: 'meeting_reminder',
+            meetingId: row.id,
+            clientId: row.client_id,
+          },
+        });
+      }
+    }
+  }
+
   // ── internals ──────────────────────────────────────────────────────────────
 
   /**
@@ -385,6 +486,11 @@ export class MeetingsService {
       .from('gym_meetings')
       .select('*')
       .eq('id', meetingId)
+      // The table also holds the coach's availability windows, which are not
+      // meetings and have no answer to give. Excluded here rather than left to
+      // the status checks below, so an id that names one reads as "no such
+      // meeting" instead of quietly reaching the update paths.
+      .neq('status', 'availability')
       .maybeSingle<MeetingRow>();
 
     if (error) {
@@ -419,6 +525,7 @@ export class MeetingsService {
       startsAt: row.starts_at,
       proposedStartsAt: row.proposed_starts_at,
       durationMinutes: row.duration_minutes,
+      service: row.service,
       location: row.location,
       note: row.note,
       status: row.status,
@@ -490,8 +597,20 @@ export class MeetingsService {
       month: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
-      timeZone: 'Europe/Prague',
+      timeZone: COACH_TZ,
     });
+  }
+
+  /**
+   * What to call the session in a push.
+   *
+   * The service the client booked, when they booked one — "Osobní trénink
+   * v úterý" tells the coach what they are being asked for, which a bare time
+   * does not. The fallback is per call site rather than shared: the copy
+   * around it differs, and Czech does not let one noun sit in all of them.
+   */
+  private sessionLabel(row: MeetingRow, fallback: string): string {
+    return row.service?.trim() || fallback;
   }
 
   private async notifyOfRequest(row: MeetingRow): Promise<void> {
@@ -509,7 +628,7 @@ export class MeetingsService {
 
     this.notificationsService.notifyUser(row.coach_id, {
       title: 'Nová žádost o schůzku',
-      body: `${clientName} navrhuje trénink ${this.formatSlot(row.starts_at)}.`,
+      body: `${clientName} navrhuje ${this.sessionLabel(row, 'trénink')} ${this.formatSlot(row.starts_at)}.`,
       data: {
         type: 'meeting_request',
         meetingId: row.id,
@@ -536,16 +655,17 @@ export class MeetingsService {
     }
 
     const slot = this.formatSlot(row.proposed_starts_at ?? row.starts_at);
+    const session = this.sessionLabel(row, 'termín');
     const copy: Record<typeof action, { title: string; body: string }> = {
       approve: {
         title: 'Schůzka potvrzena',
-        body: `${responderName} potvrdil termín ${slot}.`,
+        body: `${responderName} potvrdil ${session} ${slot}.`,
       },
       decline: {
         title: 'Schůzka zamítnuta',
         body: row.decline_reason
           ? `${responderName}: ${row.decline_reason}`
-          : `${responderName} termín ${slot} nepřijal.`,
+          : `${responderName} ${session} ${slot} nepřijal.`,
       },
       propose: {
         title: 'Navržen jiný termín',

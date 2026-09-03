@@ -7,12 +7,19 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Put,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { MeetingsService } from './meetings.service';
+import { CoachAvailabilityService } from './availability.service';
 import { CreateMeetingDto, RespondMeetingDto } from './dto/meeting.dto';
+import {
+  AvailabilityRangeDto,
+  SetAvailabilityDto,
+} from './dto/availability.dto';
 import { SupabaseAuthGuard } from 'utils/AuthGuard';
 import * as authReq from 'utils/authenticated-request.interface';
 
@@ -21,7 +28,50 @@ import * as authReq from 'utils/authenticated-request.interface';
 @Controller('meetings')
 @UseGuards(SupabaseAuthGuard)
 export class MeetingsController {
-  constructor(private readonly meetingsService: MeetingsService) {}
+  constructor(
+    private readonly meetingsService: MeetingsService,
+    private readonly availabilityService: CoachAvailabilityService,
+  ) {}
+
+  /**
+   * GET /meetings/availability
+   *
+   * The signed-in coach's own week, for the screen they edit it on.
+   */
+  @Get('availability')
+  async myAvailability(@Req() req: authReq.AuthenticatedRequest) {
+    return this.availabilityService.listOwn(req.user.id);
+  }
+
+  /**
+   * PUT /meetings/availability
+   *
+   * Replaces the coach's whole week. An empty list clears it, which puts their
+   * clients back on a free-form picker.
+   */
+  @Put('availability')
+  @HttpCode(HttpStatus.OK)
+  async setMyAvailability(
+    @Body() body: SetAvailabilityDto,
+    @Req() req: authReq.AuthenticatedRequest,
+  ) {
+    return this.availabilityService.replaceOwn(req.user.id, body);
+  }
+
+  /**
+   * GET /meetings/availability/:coachId?from=&to=
+   *
+   * The windows and the already-taken stretches a client needs to draw a slot
+   * grid. Ranges only — never who the other slots belong to.
+   */
+  @Get('availability/:coachId')
+  async coachAvailability(
+    @Param('coachId', ParseUUIDPipe) coachId: string,
+    @Query() range: AvailabilityRangeDto,
+    @Req() req: authReq.AuthenticatedRequest,
+  ) {
+    return this.availabilityService.forBooking(req.user.id, coachId, range);
+  }
 
   /**
    * GET /meetings
