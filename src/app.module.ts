@@ -21,6 +21,7 @@ import { CoachPlansModule } from './coach-plans/coach-plans.module';
 import { ChatModule } from './chat/chat.module';
 import { JoinModule } from './join/join.module';
 import { MeetingsModule } from './meetings/meetings.module';
+import { RetentionModule } from './retention/retention.module';
 
 @Module({
   imports: [
@@ -78,6 +79,7 @@ import { MeetingsModule } from './meetings/meetings.module';
     ChatModule,
     JoinModule,
     MeetingsModule,
+    RetentionModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -391,6 +391,20 @@ export class UserService {
     return data;
   }
 
+  /**
+   * Erases the account and everything it owns.
+   *
+   * Order matters. The rows go first, through a single transaction in
+   * `delete_user_account` (`sql/2026-09-05_account_deletion.sql`), then the
+   * uploaded files, then the auth user. Anything that fails leaves an account
+   * that still works and a call that can be retried; the old order deleted the
+   * auth user first, so a failure further down left data behind that nobody
+   * could reach or delete. Storage before auth is also load-bearing:
+   * `storage.objects.owner` references `auth.users`, so files left in the
+   * bucket can refuse the auth delete.
+   *
+   * A coach's clients keep the training assigned to them — see the SQL.
+   */
   async deleteUser(userId: string) {
     // auth.admin requires the service-role client (anon key gets a 403).
     const adminClient = this.supabaseService.getAdminClient();
@@ -404,6 +418,23 @@ export class UserService {
       );
     }
 
+    const { error: dataError } = await this.supabaseService.supabase.rpc(
+      'delete_user_account',
+      { p_user_id: userId },
+    );
+
+    if (dataError) {
+      throw new InternalServerErrorException(
+        `Error deleting user data: ${dataError.message}`,
+      );
+    }
+
+    await this.removeStoredFiles('user', userId);
+    await this.removeStoredFiles('coach-images', `gallery/${userId}`);
+    await this.supabaseService.supabase.storage
+      .from('coach-images')
+      .remove([`avatars/${userId}.webp`]);
+
     const { error: authError } =
       await adminClient.auth.admin.deleteUser(userId);
 
@@ -413,16 +444,41 @@ export class UserService {
       );
     }
 
-    const { error } = await this.supabaseService.supabase
-      .from('user')
-      .delete()
-      .eq('id', userId);
+    return true;
+  }
 
-    if (error) {
-      throw new Error(`Error deleting user: ${error.message}`);
+  /** Empties one storage folder. Paged: `list` caps out at 100 by default. */
+  private async removeStoredFiles(bucket: string, folder: string) {
+    const storage = this.supabaseService.supabase.storage.from(bucket);
+    const paths: string[] = [];
+    const pageSize = 100;
+
+    for (let offset = 0; ; offset += pageSize) {
+      const { data, error } = await storage.list(folder, {
+        limit: pageSize,
+        offset,
+      });
+
+      if (error) {
+        throw new InternalServerErrorException(
+          `Error listing ${bucket}/${folder}: ${error.message}`,
+        );
+      }
+      if (!data || data.length === 0) break;
+
+      paths.push(...data.map((file) => `${folder}/${file.name}`));
+      if (data.length < pageSize) break;
     }
 
-    return true;
+    if (paths.length === 0) return;
+
+    const { error } = await storage.remove(paths);
+
+    if (error) {
+      throw new InternalServerErrorException(
+        `Error deleting files from ${bucket}: ${error.message}`,
+      );
+    }
   }
 
   private generateCoachCode(): string {
