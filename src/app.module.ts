@@ -22,6 +22,8 @@ import { ChatModule } from './chat/chat.module';
 import { JoinModule } from './join/join.module';
 import { MeetingsModule } from './meetings/meetings.module';
 import { RetentionModule } from './retention/retention.module';
+import { LeaderboardModule } from './leaderboard/leaderboard.module';
+import { AppVersionModule } from './app-version/app-version.module';
 
 @Module({
   imports: [
@@ -80,6 +82,8 @@ import { RetentionModule } from './retention/retention.module';
     JoinModule,
     MeetingsModule,
     RetentionModule,
+    LeaderboardModule,
+    AppVersionModule,
   ],
   controllers: [AppController],
   providers: [AppService],
