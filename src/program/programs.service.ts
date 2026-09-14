@@ -953,12 +953,34 @@ export class ProgramsService {
       .maybeSingle();
 
     if (relation?.coach_id) {
+      // A coach with several clients needs the name to know who it was. A
+      // missing profile still sends, just without one.
+      const { data: client } = await this.supabase
+        .from('user')
+        .select('first_name, last_name')
+        .eq('id', userId)
+        .maybeSingle();
+
+      const row = client as {
+        first_name: string | null;
+        last_name: string | null;
+      } | null;
+      const firstName = row?.first_name ?? '';
+      const lastName = row?.last_name ?? '';
+      const clientName =
+        [firstName, lastName].filter(Boolean).join(' ').trim() ||
+        'One of your clients';
+
       this.notificationsService.notifyUser(relation.coach_id, {
         title: 'Workout Completed!',
-        body: 'One of your clients just completed a workout. Check their performance!',
+        body: `${clientName} just completed a workout. Check their performance!`,
+        // The app opens this client's profile on tap (`openClient` in the
+        // app's root layout); the names title that screen.
         data: {
           type: 'workout_completed',
           userId,
+          firstName,
+          lastName,
         },
       });
     }

@@ -23,6 +23,7 @@ import { JoinModule } from './join/join.module';
 import { MeetingsModule } from './meetings/meetings.module';
 import { RetentionModule } from './retention/retention.module';
 import { LeaderboardModule } from './leaderboard/leaderboard.module';
+import { RewardsModule } from './rewards/rewards.module';
 import { AppVersionModule } from './app-version/app-version.module';
 
 @Module({
@@ -83,6 +84,7 @@ import { AppVersionModule } from './app-version/app-version.module';
     MeetingsModule,
     RetentionModule,
     LeaderboardModule,
+    RewardsModule,
     AppVersionModule,
   ],
   controllers: [AppController],

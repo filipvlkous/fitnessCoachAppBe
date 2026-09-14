@@ -75,6 +75,35 @@ export class AccessService {
       .filter((id): id is string => !!id);
   }
 
+  /**
+   * Every user this coach holds an approved relation to.
+   *
+   * The mirror image of `getApprovedCoachIds`, and needed for the same reason:
+   * cache entries are keyed by *reader*, so a coach changing something their
+   * clients read means clearing the copy each client may be holding.
+   */
+  async getApprovedClientIds(coachId: string): Promise<string[]> {
+    if (!coachId) return [];
+
+    const { data, error } = await this.supabase
+      .from('coach_user_relations')
+      .select('user_id')
+      .eq('coach_id', coachId)
+      .eq('status', 'approved')
+      .returns<{ user_id: string | null }[]>();
+
+    if (error) {
+      // Same trade as above: the write this follows has already succeeded, and
+      // failing it over a cache sweep would be worse than a stale minute.
+      console.error('Failed to list approved clients:', error);
+      return [];
+    }
+
+    return (data ?? [])
+      .map((row) => row.user_id)
+      .filter((id): id is string => !!id);
+  }
+
   async assertSelfOrCoach(
     requesterId: string,
     targetUserId: string,
@@ -192,9 +221,7 @@ export class AccessService {
   ): Promise<void> {
     const { data, error } = await this.supabase
       .from('user_assigned_exercises')
-      .select(
-        'user_program_days!inner(user_workout_programs!inner(user_id))',
-      )
+      .select('user_program_days!inner(user_workout_programs!inner(user_id))')
       .eq('id', assignedExerciseId)
       .maybeSingle();
 

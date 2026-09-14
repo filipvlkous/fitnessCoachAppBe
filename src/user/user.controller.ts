@@ -15,6 +15,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { MAX_IMAGE_BYTES, mediaFileFilter } from 'utils/upload-limits';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserService } from './user.service';
 import { BecomeCoachDto, UpdateProfileDto } from './dto/user.dto';
@@ -259,7 +260,12 @@ export class UserController {
   }
 
   @Post('body-photos/:userId')
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: MAX_IMAGE_BYTES },
+      fileFilter: mediaFileFilter({ file: 'image' }),
+    }),
+  )
   async addBodyPhoto(
     @Param('userId') userId: string,
     @UploadedFile() file: Express.Multer.File,

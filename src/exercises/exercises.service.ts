@@ -1,6 +1,7 @@
 // src/exercises/exercises.service.ts
 import {
   BadRequestException,
+  HttpException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -8,8 +9,13 @@ import { SupabaseService } from '../supabase/supabase.service';
 import {
   CreateExerciseDto,
   UpdateExerciseCatalogDto,
+  UpsertCoachExerciseVersionDto,
 } from './dto/exercises.dto';
-import sharp from 'sharp';
+import {
+  CoachExerciseVersion,
+  resolveExerciseForViewer,
+} from './exercise-version';
+import { compressImage } from 'utils/compress-image';
 import path from 'path';
 
 @Injectable()
@@ -184,9 +190,23 @@ export class ExercisesService {
       throw new Error(mediaError.message);
     }
 
+    // Coaches' own versions go with the exercise by foreign key, but their
+    // uploaded images do not — those are storage objects, and nothing else
+    // would ever reference them again.
+    const { data: versions, error: versionError } = await this.supabase
+      .from('exercise_coach_versions')
+      .select('img_url')
+      .eq('exercise_id', id)
+      .returns<{ img_url: string | null }[]>();
+
+    if (versionError) throw new Error(versionError.message);
+
     const locations = [
       this.parseStorageLocation(media?.img_url),
       this.parseStorageLocation(media?.video_url),
+      ...(versions ?? []).map((version) =>
+        this.parseStorageLocation(version.img_url ?? undefined),
+      ),
     ].filter((location): location is { bucket: string; path: string } =>
       Boolean(location),
     );
@@ -217,71 +237,295 @@ export class ExercisesService {
     return { message: 'Exercise deleted successfully' };
   }
 
+  /**
+   * Whose version of an exercise this viewer should be shown: the coach who
+   * trains them. The `limit(1)` matches every other coach lookup in this
+   * codebase — the app models one coach per athlete, and the app's own session
+   * carries a single `coachId`.
+   *
+   * Deliberately *not* "the viewer's own version when the viewer is a coach".
+   * A coach's exercise screen reads this same endpoint to populate the editor
+   * that writes back to the shared catalogue: hand it an overlaid image and the
+   * next save copies that coach's private picture into the catalogue everyone
+   * else reads. Coaches see their own version in its own card, loaded through
+   * `getCoachVersion`, where there is no such ambiguity.
+   *
+   * Null means no version applies — an athlete training on their own — and the
+   * catalogue stands.
+   */
+  private async resolveVersionCoachId(
+    viewerId?: string,
+  ): Promise<string | null> {
+    if (!viewerId) return null;
+
+    const { data: relation } = await this.supabase
+      .from('coach_user_relations')
+      .select('coach_id')
+      .eq('user_id', viewerId)
+      .eq('status', 'approved')
+      .limit(1)
+      .maybeSingle();
+
+    return relation?.coach_id ?? null;
+  }
+
+  private async findCoachVersion(
+    exerciseId: string,
+    coachId: string | null,
+  ): Promise<CoachExerciseVersion | null> {
+    if (!coachId) return null;
+
+    const { data, error } = await this.supabase
+      .from('exercise_coach_versions')
+      .select('description, img_url, youtube_url')
+      .eq('exercise_id', exerciseId)
+      .eq('coach_id', coachId)
+      .maybeSingle();
+
+    if (error) throw new Error(error.message);
+    return (data as CoachExerciseVersion | null) ?? null;
+  }
+
+  /**
+   * What this viewer should see for an exercise: the catalogue, with their
+   * coach's own version laid over it by `resolveExerciseForViewer`.
+   *
+   * `description` comes back with every `type`. It is one text column on a row
+   * already being read, and the logger's header needs it whichever media
+   * section prompted the call.
+   */
   async getMedia(
     exerciseId: string,
     type: 'image' | 'video' | 'both' = 'both',
+    viewerId?: string,
   ) {
     const { data, error } = await this.supabase
       .from('exercises')
-      .select(
-        // The YouTube link rides along with the video selection: both feed the
-        // same "video" section in the app, and the logger asks for type=video.
-        type === 'both'
-          ? 'img_url, video_url, youtube_url'
-          : type === 'image'
-            ? 'img_url'
-            : 'video_url, youtube_url',
-      )
+      .select('description, img_url, video_url, youtube_url')
       .eq('id', exerciseId)
       .single();
 
     if (error) throw new Error(error.message);
-    return data;
+
+    const version = await this.findCoachVersion(
+      exerciseId,
+      await this.resolveVersionCoachId(viewerId),
+    );
+
+    const { description, img_url, video_url, youtube_url } =
+      resolveExerciseForViewer(data, version);
+
+    if (type === 'image') return { description, img_url };
+    // The YouTube link rides along with the video selection: both feed the
+    // same "video" section in the app, and the logger asks for type=video.
+    if (type === 'video') return { description, video_url, youtube_url };
+    return { description, img_url, video_url, youtube_url };
   }
 
-  private async compressImage(imageBuffer: Buffer): Promise<Buffer> {
-    try {
-      return await sharp(imageBuffer)
-        .resize(1280, 720, {
-          fit: 'inside',
-          withoutEnlargement: true,
-        })
-        .webp({ quality: 80 })
-        .toBuffer();
-    } catch (error: any) {
-      console.warn(
-        'Image compression failed, uploading original:',
-        error.message,
+  /** The coach's own version, for their editor. Null when they have none. */
+  async getCoachVersion(exerciseId: string, coachId: string) {
+    return this.findCoachVersion(exerciseId, coachId);
+  }
+
+  /**
+   * Write the coach's text and link. Same three-state convention as the
+   * catalogue: an absent key leaves the stored value alone, '' clears it back
+   * to the catalogue's, text overrides.
+   *
+   * The image is not written here — it is a file with its own endpoint — but an
+   * upsert must not drop it, so the existing row is read first and its
+   * `img_url` carried through.
+   */
+  async upsertCoachVersion(
+    exerciseId: string,
+    coachId: string,
+    dto: UpsertCoachExerciseVersionDto,
+  ): Promise<CoachExerciseVersion> {
+    // 404 rather than a foreign-key error from Postgres: a coach writing a
+    // version of an exercise someone else has just deleted should read as the
+    // exercise being gone, not as a failed save.
+    await this.findOne(exerciseId);
+
+    const existing = await this.findCoachVersion(exerciseId, coachId);
+
+    const description =
+      dto.description === undefined
+        ? (existing?.description ?? null)
+        : dto.description.trim() || null;
+
+    const youtubeInput = this.normalizeYouTubeUrl(dto.youtube_url);
+    const youtube_url =
+      youtubeInput === undefined
+        ? (existing?.youtube_url ?? null)
+        : youtubeInput;
+
+    const { data, error } = await this.supabase
+      .from('exercise_coach_versions')
+      .upsert(
+        {
+          exercise_id: exerciseId,
+          coach_id: coachId,
+          description,
+          youtube_url,
+          img_url: existing?.img_url ?? null,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'exercise_id,coach_id' },
+      )
+      .select('description, img_url, youtube_url')
+      .single();
+
+    if (error) throw new Error(error.message);
+    return data as CoachExerciseVersion;
+  }
+
+  /**
+   * Replace the image on the coach's version. Compressed and stored exactly
+   * like a catalogue image, in the same bucket — the app cannot tell the two
+   * apart, and should not have to.
+   *
+   * The previous object is deleted after the row points at the new one: a
+   * failed cleanup leaves an orphan file, while cleaning up first would leave a
+   * live row pointing at nothing if the upload then failed.
+   */
+  async uploadCoachVersionImage(
+    exerciseId: string,
+    coachId: string,
+    imageFile: { file: Buffer; filename: string },
+  ): Promise<CoachExerciseVersion> {
+    await this.findOne(exerciseId);
+
+    const existing = await this.findCoachVersion(exerciseId, coachId);
+
+    const compressed = await this.compressExerciseImage(imageFile.file);
+    const imagePath = `coach-version-${coachId}-${Date.now()}.webp`;
+
+    const { error: uploadError } = await this.supabase.storage
+      .from('images')
+      .upload(imagePath, compressed, {
+        cacheControl: '31536000',
+        upsert: false,
+        contentType: 'image/webp',
+      });
+
+    if (uploadError)
+      throw new Error(`Image upload failed: ${uploadError.message}`);
+
+    const { data: publicUrl } = this.supabase.storage
+      .from('images')
+      .getPublicUrl(imagePath);
+
+    const { data, error } = await this.supabase
+      .from('exercise_coach_versions')
+      .upsert(
+        {
+          exercise_id: exerciseId,
+          coach_id: coachId,
+          description: existing?.description ?? null,
+          youtube_url: existing?.youtube_url ?? null,
+          img_url: publicUrl.publicUrl,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'exercise_id,coach_id' },
+      )
+      .select('description, img_url, youtube_url')
+      .single();
+
+    if (error) throw new Error(error.message);
+
+    await this.removeStorageObjects([existing?.img_url]);
+
+    return data as CoachExerciseVersion;
+  }
+
+  /**
+   * Drop the coach's version, or just its image.
+   *
+   * Deleting the whole version is how a coach goes back to the catalogue, so a
+   * missing row is success, not an error: the end state they asked for is the
+   * end state they get.
+   */
+  async deleteCoachVersion(
+    exerciseId: string,
+    coachId: string,
+    part: 'image' | 'all' = 'all',
+  ) {
+    const existing = await this.findCoachVersion(exerciseId, coachId);
+    if (!existing) return { message: 'No coach version to delete' };
+
+    if (part === 'image') {
+      const { error } = await this.supabase
+        .from('exercise_coach_versions')
+        .update({ img_url: null, updated_at: new Date().toISOString() })
+        .eq('exercise_id', exerciseId)
+        .eq('coach_id', coachId);
+
+      if (error) throw new Error(error.message);
+      await this.removeStorageObjects([existing.img_url]);
+      return { message: 'Coach version image deleted' };
+    }
+
+    const { error } = await this.supabase
+      .from('exercise_coach_versions')
+      .delete()
+      .eq('exercise_id', exerciseId)
+      .eq('coach_id', coachId);
+
+    if (error) throw new Error(error.message);
+    await this.removeStorageObjects([existing.img_url]);
+    return { message: 'Coach version deleted' };
+  }
+
+  /**
+   * Delete storage objects by their public URL, grouped by bucket. Anything
+   * that is not a storage URL is skipped rather than guessed at.
+   */
+  private async removeStorageObjects(
+    urls: (string | null | undefined)[],
+  ): Promise<void> {
+    const locations = urls
+      .map((url) => this.parseStorageLocation(url ?? undefined))
+      .filter((location): location is { bucket: string; path: string } =>
+        Boolean(location),
       );
-      return imageBuffer;
+
+    if (locations.length === 0) return;
+
+    const bucketMap = new Map<string, string[]>();
+    for (const location of locations) {
+      const list = bucketMap.get(location.bucket) || [];
+      list.push(location.path);
+      bucketMap.set(location.bucket, list);
+    }
+
+    for (const [bucket, paths] of bucketMap.entries()) {
+      const { error } = await this.supabase.storage.from(bucket).remove(paths);
+      if (error) throw new Error(error.message);
     }
   }
 
-  // Compress video buffer (basic size check, proper compression needs ffmpeg)
-  private async compressVideo(videoBuffer: Buffer): Promise<Buffer> {
-    // Note: Full video compression requires ffmpeg
-    // For now, we'll just return the buffer if it's under 100MB, else warn
-    const maxSize = 100 * 1024 * 1024; // 100MB
-    if (videoBuffer.length > maxSize) {
-      console.warn(
-        `Video size (${(videoBuffer.length / 1024 / 1024).toFixed(2)}MB) exceeds recommended 100MB. Consider using ffmpeg for proper compression.`,
-      );
-    }
-    return videoBuffer;
+  /**
+   * Catalogue images are landscape by intent — a demonstration frame, shown in
+   * a card — so the height is capped harder than the width.
+   */
+  private compressExerciseImage(imageBuffer: Buffer): Promise<Buffer> {
+    return compressImage(imageBuffer, { maxWidth: 1280, maxHeight: 720 });
   }
 
   // Upload image and video to Supabase storage
   async uploadMedia(
     exerciseId: string,
     imageFile?: { file: Buffer; filename: string },
-    videoFile?: { file: Buffer; filename: string },
+    videoFile?: { file: Buffer; filename: string; mimetype: string },
   ) {
     const urls: { img_url?: string; video_url?: string } = {};
 
     try {
       // Upload image if provided
       if (imageFile) {
-        const compressedImageBuffer = await this.compressImage(imageFile.file);
+        const compressedImageBuffer = await this.compressExerciseImage(
+          imageFile.file,
+        );
         const imagePath = `image-${Date.now()}.webp`;
         const { error: imageError } = await this.supabase.storage
           .from('images')
@@ -301,25 +545,28 @@ export class ExercisesService {
         urls.img_url = imageUrl.publicUrl;
       }
 
-      // Upload video if provided
+      // Upload video if provided.
+      //
+      // Stored as it arrives. Re-encoding here would mean ffmpeg in the image
+      // and a transcode running inside the request handler, where a large clip
+      // blocks a worker for minutes; there is no queue to hand it to. The
+      // client compresses before uploading instead — a phone does this on its
+      // own hardware for free — and MAX_VIDEO_BYTES on the endpoint is what
+      // holds it to that.
       if (videoFile) {
-        // 1. Move compression to a background worker if possible,
-        // but at least ensure we use a stream or optimized buffer.
-        const compressedVideoBuffer = await this.compressVideo(videoFile.file);
-
-        // 2. Better Naming: Use a folder structure for organization
         const videoPath = `exercises/${Date.now()}-${videoFile.filename}`;
 
-        const { data: videoData, error: videoError } =
-          await this.supabase.storage
-            .from('videos')
-            .upload(videoPath, compressedVideoBuffer, {
-              // 3. MAXIMIZE CACHED EGRESS (1 Year)
-              cacheControl: '31536000',
-              // 4. HELP THE PLAYER
-              contentType: 'video/mp4',
-              upsert: false,
-            });
+        const { error: videoError } = await this.supabase.storage
+          .from('videos')
+          .upload(videoPath, videoFile.file, {
+            // A year: these are immutable once written, and cached egress is
+            // the part of the bill that grows with the user count.
+            cacheControl: '31536000',
+            // The real type, not an assumed one. iOS records QuickTime, and a
+            // .mov served as video/mp4 is a player bug waiting to happen.
+            contentType: videoFile.mimetype,
+            upsert: false,
+          });
 
         if (videoError)
           throw new Error(`Video upload failed: ${videoError.message}`);
@@ -344,6 +591,10 @@ export class ExercisesService {
 
       return urls;
     } catch (error: any) {
+      // A rejected upload (an image sharp cannot decode, say) already carries
+      // the right status; wrapping it in a plain Error would turn a 400 into
+      // a 500 and tell the client to retry something that cannot succeed.
+      if (error instanceof HttpException) throw error;
       throw new Error(`Media upload error: ${error.message}`);
     }
   }

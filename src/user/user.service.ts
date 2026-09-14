@@ -26,6 +26,8 @@ import {
   SaveConsentsDto,
 } from './dto/consent.dto';
 import { BecomeCoachDto, UpdateProfileDto } from './dto/user.dto';
+import { compressImage } from 'utils/compress-image';
+import { removeChatPhotosOf } from 'src/chat/chat-photo';
 
 /** Consent columns on the `user` row. */
 interface ConsentStateRow {
@@ -418,6 +420,10 @@ export class UserService {
       );
     }
 
+    // Before the RPC: chat photo files are found through their rows, and the
+    // RPC deletes those.
+    await removeChatPhotosOf(this.supabaseService.supabase, userId);
+
     const { error: dataError } = await this.supabaseService.supabase.rpc(
       'delete_user_account',
       { p_user_id: userId },
@@ -574,13 +580,24 @@ export class UserService {
     return data;
   }
 
+  /**
+   * Progress photos are the heaviest thing this app stores: one per user per
+   * week, kept forever, and straight off a phone camera at 3-8 MB apiece. They
+   * used to go to the bucket exactly as they arrived. Compressed, they land at
+   * roughly a twentieth of that, and 1440px on the long edge is still more than
+   * a side-by-side comparison view can show.
+   */
   async addBodyPhoto(userId: string, file: Express.Multer.File, slot?: string) {
-    const fileName = `${userId}/${Date.now()}.jpg`;
+    const compressed = await compressImage(file.buffer, {
+      maxWidth: 1080,
+      maxHeight: 1440,
+    });
+    const fileName = `${userId}/${Date.now()}.webp`;
 
     const { error: uploadError } = await this.supabaseService.supabase.storage
       .from('user')
-      .upload(fileName, file.buffer, {
-        contentType: file.mimetype,
+      .upload(fileName, compressed, {
+        contentType: 'image/webp',
         upsert: false,
       });
 

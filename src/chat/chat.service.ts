@@ -2,21 +2,28 @@ import {
   ForbiddenException,
   Injectable,
   InternalServerErrorException,
+  Logger,
 } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
+import { randomUUID } from 'crypto';
 import { SupabaseService } from 'src/supabase/supabase.service';
 import { AccessService } from 'src/auth/access.service';
 import { NotificationsService } from 'src/notifications/notifications.service';
+import { compressImage } from 'utils/compress-image';
+import { CHAT_PHOTO_BUCKET, purgeExpiredPhotos } from './chat-photo';
 
 export interface ChatMessage {
   id: string;
   coach_id: string;
   user_id: string;
   sender_id: string;
-  kind: 'text' | 'workout_note';
+  kind: 'text' | 'workout_note' | 'photo';
   body: string;
   metadata: Record<string, unknown> | null;
   created_at: string;
   read_at: string | null;
+  /** Signed URL of a photo message, added on the way out. Not a column. */
+  photo_url?: string | null;
 }
 
 /** The two participants of a chat, resolved and authorized. */
@@ -38,8 +45,22 @@ export interface WorkoutNoteInput {
 const DEFAULT_PAGE = 30;
 const MAX_PAGE = 100;
 
+/**
+ * Lifetime of a signed photo URL. Long enough to read a chat, short enough that
+ * a copied link is dead long before the photo's 7 days are up.
+ */
+const PHOTO_URL_TTL_SECONDS = 60 * 60;
+
+/**
+ * Body stored on a photo message. `chat_messages_body_check` rejects an empty
+ * one, and an app build without photo support shows it as a plain message.
+ */
+const PHOTO_MESSAGE_BODY = '📷';
+
 @Injectable()
 export class ChatService {
+  private readonly logger = new Logger(ChatService.name);
+
   constructor(
     private readonly supabaseService: SupabaseService,
     private readonly accessService: AccessService,
@@ -84,7 +105,7 @@ export class ChatService {
 
     const { data, error } = await query;
     if (error) throw new InternalServerErrorException(error.message);
-    return (data ?? []) as ChatMessage[];
+    return this.withPhotoUrls((data ?? []) as ChatMessage[]);
   }
 
   async sendMessage(
@@ -116,11 +137,110 @@ export class ChatService {
         senderId === pair.coachId
           ? 'New message from your coach'
           : 'New message from your client',
-      body: body.length > 120 ? `${body.slice(0, 117)}…` : body,
+      body:
+        kind === 'photo'
+          ? 'Sent a photo'
+          : body.length > 120
+            ? `${body.slice(0, 117)}…`
+            : body,
       data: { type: 'chat_message', peerId: senderId },
     });
 
     return data as ChatMessage;
+  }
+
+  /**
+   * Stores a photo in the private bucket and posts it as a `photo` message.
+   * `purgeExpiredPhotosJob` deletes both the file and the row after 7 days.
+   */
+  async sendPhoto(
+    pair: ChatPair,
+    senderId: string,
+    file: Express.Multer.File,
+  ): Promise<ChatMessage> {
+    // 1440px on the long edge, the most any upload in this app keeps.
+    const compressed = await compressImage(file.buffer, {
+      maxWidth: 1440,
+      maxHeight: 1440,
+    });
+    const path = `${pair.coachId}/${pair.userId}/${randomUUID()}.webp`;
+    const storage = this.supabase.storage.from(CHAT_PHOTO_BUCKET);
+
+    const { error: uploadError } = await storage.upload(path, compressed, {
+      contentType: 'image/webp',
+      upsert: false,
+    });
+    if (uploadError) {
+      throw new InternalServerErrorException(
+        `Error uploading chat photo: ${uploadError.message}`,
+      );
+    }
+
+    let message: ChatMessage;
+    try {
+      message = await this.sendMessage(
+        pair,
+        senderId,
+        PHOTO_MESSAGE_BODY,
+        'photo',
+        { photo_path: path },
+      );
+    } catch (error) {
+      // Without a row nothing points at the file, so the purge would never
+      // find it.
+      await storage.remove([path]);
+      throw error;
+    }
+
+    const [signed] = await this.withPhotoUrls([message]);
+    return signed;
+  }
+
+  /** Adds a signed URL to every photo message; the bucket itself is private. */
+  private async withPhotoUrls(messages: ChatMessage[]): Promise<ChatMessage[]> {
+    const paths = messages
+      .map((message) => message.metadata?.photo_path)
+      .filter((path): path is string => typeof path === 'string');
+    if (paths.length === 0) return messages;
+
+    const { data, error } = await this.supabase.storage
+      .from(CHAT_PHOTO_BUCKET)
+      .createSignedUrls(paths, PHOTO_URL_TTL_SECONDS);
+    if (error) throw new InternalServerErrorException(error.message);
+
+    const urlByPath = new Map(
+      (data ?? []).map((entry) => [
+        entry.path,
+        entry.error ? null : entry.signedUrl,
+      ]),
+    );
+    return messages.map((message) =>
+      message.kind === 'photo'
+        ? {
+            ...message,
+            photo_url:
+              urlByPath.get(message.metadata?.photo_path as string) ?? null,
+          }
+        : message,
+    );
+  }
+
+  /**
+   * Deletes photos — file and message — once they are 7 days old. Hourly, so
+   * none outlives that by more than an hour.
+   */
+  @Cron('15 * * * *')
+  async purgeExpiredPhotosJob(): Promise<void> {
+    try {
+      const deleted = await purgeExpiredPhotos(this.supabase, new Date());
+      if (deleted > 0) {
+        this.logger.log(`Deleted ${deleted} expired chat photos.`);
+      }
+    } catch (error) {
+      this.logger.error(
+        `Chat photo purge failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   /** Marks everything the reader received in this chat as read. */

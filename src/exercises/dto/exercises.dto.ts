@@ -37,3 +37,22 @@ export class UpdateExerciseCatalogDto {
   @MaxLength(500)
   youtube_url?: string;
 }
+
+/**
+ * A coach's own version of a shared catalogue exercise. Both fields follow the
+ * same three-state convention the catalogue uses: omit the key to leave the
+ * stored value alone, send '' to clear it back to the catalogue's, send text to
+ * override. The image is not here — it is a file, uploaded through its own
+ * endpoint.
+ */
+export class UpsertCoachExerciseVersionDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  description?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  youtube_url?: string;
+}

@@ -6,7 +6,7 @@ import {
 import { SupabaseService } from 'src/supabase/supabase.service';
 import { UpdateCoachProfileDto } from './dto/coachProfile.dto';
 import { SearchCoachProfilesDto } from './dto/searchCoach.dto';
-import sharp from 'sharp';
+import { compressImage } from 'utils/compress-image';
 
 export interface CoachProfile {
   id: string;
@@ -221,7 +221,11 @@ export class CoachProfileService {
     file: Express.Multer.File,
   ): Promise<{ avatarUrl: string }> {
     // Avatars don't need to be huge. 400x400 is plenty for high-DPI screens.
-    const processedBuffer = await this.processImage(file.buffer, 400, 400);
+    const processedBuffer = await compressImage(file.buffer, {
+      maxWidth: 400,
+      maxHeight: 400,
+      fit: 'cover',
+    });
     const path = `avatars/${coachId}.webp`; // Changed extension to .webp
 
     const { error: uploadError } = await this.supabaseService.supabase.storage
@@ -257,7 +261,10 @@ export class CoachProfileService {
 
     for (const file of files) {
       // Resize gallery images to a max width (e.g., 1200px) but keep aspect ratio
-      const processedBuffer = await this.processImage(file.buffer, 1200);
+      const processedBuffer = await compressImage(file.buffer, {
+        maxWidth: 1200,
+        maxHeight: 1200,
+      });
       const path = `gallery/${coachId}/${Date.now()}-${Math.random().toString(36).slice(2)}.webp`;
 
       const { error } = await this.supabaseService.supabase.storage
@@ -325,23 +332,5 @@ export class CoachProfileService {
     }
 
     return data;
-  }
-
-  private async processImage(
-    buffer: Buffer,
-    width: number,
-    height?: number,
-  ): Promise<Buffer> {
-    return await sharp(buffer)
-      .resize(width, height, {
-        fit: 'cover',
-        withoutEnlargement: true,
-      })
-      .webp({
-        quality: 75, // Good balance of size/quality. Lower to 60 for "smallest possible"
-        effort: 6, // Max CPU effort for best compression ratio
-        lossless: false,
-      })
-      .toBuffer();
   }
 }

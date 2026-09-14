@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -7,8 +8,11 @@ import {
   Put,
   Query,
   Req,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ChatService } from './chat.service';
 import {
@@ -18,6 +22,7 @@ import {
 } from './dto/chat.dto';
 import { SupabaseAuthGuard } from 'utils/AuthGuard';
 import * as authReq from 'utils/authenticated-request.interface';
+import { MAX_IMAGE_BYTES, mediaFileFilter } from 'utils/upload-limits';
 
 @ApiTags('chat')
 @ApiBearerAuth()
@@ -64,6 +69,24 @@ export class ChatController {
   ) {
     const pair = await this.chatService.resolvePair(req.user.id, peerId);
     return this.chatService.sendMessage(pair, req.user.id, dto.body);
+  }
+
+  /** A photo message. It is deleted, file and row, after 7 days. */
+  @Post('with/:peerId/photo')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: MAX_IMAGE_BYTES },
+      fileFilter: mediaFileFilter({ file: 'image' }),
+    }),
+  )
+  async sendPhoto(
+    @Param('peerId') peerId: string,
+    @UploadedFile() file: Express.Multer.File,
+    @Req() req: authReq.AuthenticatedRequest,
+  ) {
+    if (!file) throw new BadRequestException('No file provided');
+    const pair = await this.chatService.resolvePair(req.user.id, peerId);
+    return this.chatService.sendPhoto(pair, req.user.id, file);
   }
 
   @Put('with/:peerId/read')
