@@ -10,6 +10,7 @@ import {
   Get,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { ImageAnalysisService } from './image-analysis.service';
 import {
   AnalyzeFoodDto,
@@ -38,6 +39,10 @@ export class ImageAnalysisController {
    * macros either way, so the client no longer follows up with
    * `food/macronutrients` — it saves through `food/manual` instead.
    */
+  // The one endpoint that pays a third party per request, and the one that
+  // accepts a 10 MB body to do it. Ten scans a minute is well past how fast a
+  // person can photograph meals, and it caps what a stuck client can spend.
+  @Throttle({ heavy: { limit: 10, ttl: 60_000 } })
   @Post('food/analyze')
   async analyzeFoodImage(@Body() analyzeFoodDto: AnalyzeFoodDto) {
     try {

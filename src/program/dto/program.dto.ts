@@ -8,6 +8,8 @@ import {
   IsEnum,
   ValidateNested,
   Min,
+  Max,
+  IsInt,
   IsDateString,
   IsUUID,
 } from 'class-validator';
@@ -339,6 +341,14 @@ export class CompleteWorkoutDto {
   @IsNumber()
   @IsOptional()
   duration_minutes?: number;
+}
+
+// Session RPE the athlete gives once, after finishing the workout.
+export class RateWorkoutDto {
+  @IsInt()
+  @Min(1)
+  @Max(10)
+  rpe: number;
 }
 
 export class LogCardioDto {

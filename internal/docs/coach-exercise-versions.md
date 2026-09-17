@@ -22,6 +22,12 @@ Pravidlo je vytažené do `src/exercises/exercise-version.ts`
 (`resolveExerciseForViewer`) a pokryté testy v `exercise-version.spec.ts`.
 Je to celá funkce na pět řádků a jediné, co nesmí odjet.
 
+**Obrázková galerie je jediná výjimka z „po polích".** Katalog má dva
+obrázkové sloty (`img_url`, `img_url_2`), trenérova verze jeden. Jeho fotka
+proto nahrazuje **celou** galerii, ne jen její první stránku — jinak by klient
+z trenérova obrázku přejel na katalogový, který si trenér nevybral a nemůže ho
+odebrat. Podrobně v `exercise-image-gallery.md`.
+
 **Nahrané krátké video (`video_url`) přebít nejde.** Je to objekt v Supabase
 Storage s vlastním úklidem, s cache v telefonu klíčovanou URL a se stropem
 100 MB na soubor. Duplikovat ho per trenér znamená násobit úložiště u pole,
@@ -61,14 +67,15 @@ textu ho neshodí.
 
 ## Cache
 
-`UserScopedCacheInterceptor` ukládá pod `user:<id>:<originalUrl>` na pět minut.
-Každý zápis verze proto maže jeden záznam **na čtenáře a na variantu `?type=`** —
-každý schválený klient krát čtyři cesty (`''`, `?type=image`, `?type=video`,
-`?type=both`). Viz `ExercisesController.invalidateMediaCache`.
+`GET /exercises/:id/media` se **necachuje**.
 
-> Stávající `cacheManager.del('/exercises/:id/media')` u katalogových zápisů
-> nemaže nic — klíč nemá ani prefix `user:`, ani `?type=`. S touhle funkcí to
-> nesouvisí a zůstalo to nedotčené, ale stojí za opravu.
+Dřív ho držel `UserScopedCacheInterceptor` pod `user:<id>:<originalUrl>` na pět
+minut. Katalogové zápisy (upload, smazání média, úprava cviku) ale mazaly
+`/exercises/:id/media` — bez prefixu `user:` i bez `?type=` — takže netrefily
+nic a klient po změně galerie viděl starou odpověď až pět minut. Správná
+invalidace by potřebovala znát každého, kdo cvik četl: u verze to jde
+(schválení klienti trenéra), u sdíleného katalogu ne. Endpoint dělá tři malé
+selecty, takže se cache nevyplatila. Drží to `exercises.controller.spec.ts`.
 
 ## Úložiště
 

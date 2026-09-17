@@ -7,6 +7,7 @@ import {
 const catalogue: CatalogueExercise = {
   description: 'Catalogue cues',
   img_url: 'https://storage/catalogue.webp',
+  img_url_2: 'https://storage/catalogue-2.webp',
   video_url: 'https://storage/clip.mp4',
   youtube_url: 'https://youtu.be/catalogue01',
 };
@@ -22,6 +23,7 @@ describe('resolveExerciseForViewer', () => {
     expect(resolveExerciseForViewer(catalogue, null)).toEqual({
       description: 'Catalogue cues',
       img_url: 'https://storage/catalogue.webp',
+      img_url_2: 'https://storage/catalogue-2.webp',
       video_url: 'https://storage/clip.mp4',
       youtube_url: 'https://youtu.be/catalogue01',
     });
@@ -60,6 +62,29 @@ describe('resolveExerciseForViewer', () => {
     expect(resolved.img_url).toBe('https://storage/coach.webp');
   });
 
+  // The gallery is the exception to going field by field: a coach has one
+  // image slot, so their picture stands alone rather than becoming the first
+  // of two with a catalogue photo they never chose behind it.
+  it('drops the catalogue second image once the coach supplies their own', () => {
+    const resolved = resolveExerciseForViewer(catalogue, {
+      ...emptyVersion,
+      img_url: 'https://storage/coach.webp',
+    });
+
+    expect(resolved.img_url).toBe('https://storage/coach.webp');
+    expect(resolved.img_url_2).toBeNull();
+  });
+
+  it('keeps both catalogue images when the coach wrote no picture', () => {
+    const resolved = resolveExerciseForViewer(catalogue, {
+      ...emptyVersion,
+      description: 'Coach cues',
+    });
+
+    expect(resolved.img_url).toBe('https://storage/catalogue.webp');
+    expect(resolved.img_url_2).toBe('https://storage/catalogue-2.webp');
+  });
+
   it('treats an empty version exactly like no version', () => {
     expect(resolveExerciseForViewer(catalogue, emptyVersion)).toEqual(
       resolveExerciseForViewer(catalogue, null),
@@ -80,6 +105,7 @@ describe('resolveExerciseForViewer', () => {
     const bare: CatalogueExercise = {
       description: null,
       img_url: null,
+      img_url_2: null,
       video_url: null,
       youtube_url: null,
     };
@@ -87,6 +113,7 @@ describe('resolveExerciseForViewer', () => {
     expect(resolveExerciseForViewer(bare, emptyVersion)).toEqual({
       description: null,
       img_url: null,
+      img_url_2: null,
       video_url: null,
       youtube_url: null,
     });

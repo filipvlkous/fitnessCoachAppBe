@@ -182,7 +182,7 @@ export class ExercisesService {
   async remove(id: string) {
     const { data: media, error: mediaError } = await this.supabase
       .from('exercises')
-      .select('img_url, video_url')
+      .select('img_url, img_url_2, video_url')
       .eq('id', id)
       .single();
 
@@ -203,6 +203,7 @@ export class ExercisesService {
 
     const locations = [
       this.parseStorageLocation(media?.img_url),
+      this.parseStorageLocation(media?.img_url_2),
       this.parseStorageLocation(media?.video_url),
       ...(versions ?? []).map((version) =>
         this.parseStorageLocation(version.img_url ?? undefined),
@@ -301,7 +302,7 @@ export class ExercisesService {
   ) {
     const { data, error } = await this.supabase
       .from('exercises')
-      .select('description, img_url, video_url, youtube_url')
+      .select('description, img_url, img_url_2, video_url, youtube_url')
       .eq('id', exerciseId)
       .single();
 
@@ -312,14 +313,16 @@ export class ExercisesService {
       await this.resolveVersionCoachId(viewerId),
     );
 
-    const { description, img_url, video_url, youtube_url } =
+    const { description, img_url, img_url_2, video_url, youtube_url } =
       resolveExerciseForViewer(data, version);
 
-    if (type === 'image') return { description, img_url };
+    // Both images travel together: they are one swipeable gallery in the app,
+    // and a caller asking for "the image" wants whichever ones there are.
+    if (type === 'image') return { description, img_url, img_url_2 };
     // The YouTube link rides along with the video selection: both feed the
     // same "video" section in the app, and the logger asks for type=video.
     if (type === 'video') return { description, video_url, youtube_url };
-    return { description, img_url, video_url, youtube_url };
+    return { description, img_url, img_url_2, video_url, youtube_url };
   }
 
   /** The coach's own version, for their editor. Null when they have none. */
@@ -512,37 +515,60 @@ export class ExercisesService {
     return compressImage(imageBuffer, { maxWidth: 1280, maxHeight: 720 });
   }
 
+  /**
+   * One catalogue image into the `images` bucket; returns its public URL.
+   *
+   * The name carries a random tail as well as the timestamp because a single
+   * request can now carry both gallery slots, and two uploads inside the same
+   * millisecond would otherwise land on the same path — which `upsert: false`
+   * turns into a failed save rather than an overwrite.
+   */
+  private async uploadCatalogueImage(imageFile: {
+    file: Buffer;
+    filename: string;
+  }): Promise<string> {
+    const compressed = await this.compressExerciseImage(imageFile.file);
+    const imagePath = `image-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}.webp`;
+
+    const { error } = await this.supabase.storage
+      .from('images')
+      .upload(imagePath, compressed, {
+        cacheControl: '31536000',
+        upsert: false,
+        contentType: 'image/webp',
+      });
+
+    if (error) throw new Error(`Image upload failed: ${error.message}`);
+
+    const { data } = this.supabase.storage
+      .from('images')
+      .getPublicUrl(imagePath);
+
+    return data.publicUrl;
+  }
+
   // Upload image and video to Supabase storage
   async uploadMedia(
     exerciseId: string,
     imageFile?: { file: Buffer; filename: string },
     videoFile?: { file: Buffer; filename: string; mimetype: string },
+    // The gallery's second slot. Independent of the first: a coach may replace
+    // either picture on its own, so an absent file leaves that column alone.
+    image2File?: { file: Buffer; filename: string },
   ) {
-    const urls: { img_url?: string; video_url?: string } = {};
+    const urls: { img_url?: string; img_url_2?: string; video_url?: string } =
+      {};
 
     try {
       // Upload image if provided
       if (imageFile) {
-        const compressedImageBuffer = await this.compressExerciseImage(
-          imageFile.file,
-        );
-        const imagePath = `image-${Date.now()}.webp`;
-        const { error: imageError } = await this.supabase.storage
-          .from('images')
-          .upload(imagePath, compressedImageBuffer, {
-            cacheControl: '31536000',
-            upsert: false,
-            contentType: 'image/webp',
-          });
+        urls.img_url = await this.uploadCatalogueImage(imageFile);
+      }
 
-        if (imageError)
-          throw new Error(`Image upload failed: ${imageError.message}`);
-
-        const { data: imageUrl } = this.supabase.storage
-          .from('images')
-          .getPublicUrl(imagePath);
-
-        urls.img_url = imageUrl.publicUrl;
+      if (image2File) {
+        urls.img_url_2 = await this.uploadCatalogueImage(image2File);
       }
 
       // Upload video if provided.
@@ -600,25 +626,41 @@ export class ExercisesService {
   }
 
   // Delete media from exercise
+  /**
+   * `image` and `image2` address the two gallery slots separately, because the
+   * coach's editor removes one picture at a time. Clearing the first does not
+   * shuffle the second down into it — the slots stay where the coach put them,
+   * and the app builds its gallery from whichever columns are filled.
+   */
   async deleteMedia(
     exerciseId: string,
-    mediaType: 'image' | 'video' | 'both' = 'both',
+    mediaType: 'image' | 'image2' | 'video' | 'both' = 'both',
   ) {
     const { data: media, error: mediaError } = await this.supabase
       .from('exercises')
-      .select('img_url, video_url')
+      .select('img_url, img_url_2, video_url')
       .eq('id', exerciseId)
       .single();
     if (mediaError)
       throw new Error(`Failed to fetch exercise: ${mediaError.message}`);
 
-    const updateData: { img_url?: null; video_url?: null } = {};
+    const updateData: {
+      img_url?: null;
+      img_url_2?: null;
+      video_url?: null;
+    } = {};
     const locations: { bucket: string; path: string }[] = [];
 
     if ((mediaType === 'image' || mediaType === 'both') && media?.img_url) {
       const imageLocation = this.parseStorageLocation(media.img_url);
       if (imageLocation) locations.push(imageLocation);
       updateData.img_url = null;
+    }
+
+    if ((mediaType === 'image2' || mediaType === 'both') && media?.img_url_2) {
+      const image2Location = this.parseStorageLocation(media.img_url_2);
+      if (image2Location) locations.push(image2Location);
+      updateData.img_url_2 = null;
     }
 
     if ((mediaType === 'video' || mediaType === 'both') && media?.video_url) {

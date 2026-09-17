@@ -32,6 +32,7 @@
     "@nestjs/platform-express": "^11.1.19",
     "@nestjs/schedule": "^6.1.1",
     "@nestjs/swagger": "^11.4.5",
+    "@nestjs/throttler": "^6.5.0",
     "@supabase/supabase-js": "^2.90.1",
     "cache-manager": "^7.2.8",
     "class-transformer": "^0.5.1",
@@ -87,6 +88,9 @@
       "**/*.(t|j)s"
     ],
     "coverageDirectory": "../coverage",
-    "testEnvironment": "node"
+    "testEnvironment": "node",
+    "modulePaths": [
+      "<rootDir>/.."
+    ]
   }
 }

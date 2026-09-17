@@ -541,6 +541,22 @@ export class ProgramsController {
     return result;
   }
 
+  // Separate from `complete`, which notifies the coach on every call: the
+  // rating comes after the workout is already finished.
+  @Put('workouts/:workout_id/rpe')
+  async rateWorkout(
+    @Param('workout_id') workoutId: string,
+    @Body() rateDto: dto.RateWorkoutDto,
+    @Req() req: authReq.AuthenticatedRequest,
+  ) {
+    await this.accessService.assertWorkoutLogAccess(req.user.id, workoutId);
+    await this.programsService.rateWorkout(workoutId, rateDto.rpe);
+    await this.cacheManager.del(
+      userCacheKey(req.user.id, `/programs/workouts/${workoutId}`),
+    );
+    return true;
+  }
+
   // ============================================
   // COMMENTS
   // ============================================

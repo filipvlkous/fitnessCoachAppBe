@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { CacheModule } from '@nestjs/cache-manager';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { ScheduleModule } from '@nestjs/schedule';
 import KeyvRedis from '@keyv/redis';
 import { AppController } from './app.controller';
@@ -25,6 +27,7 @@ import { RetentionModule } from './retention/retention.module';
 import { LeaderboardModule } from './leaderboard/leaderboard.module';
 import { RewardsModule } from './rewards/rewards.module';
 import { AppVersionModule } from './app-version/app-version.module';
+import { throttlerOptions } from './throttler.config';
 
 @Module({
   imports: [
@@ -64,6 +67,9 @@ import { AppVersionModule } from './app-version/app-version.module';
       },
     }),
 
+    // Rate limiting; the limits and the reasoning live in `throttler.config.ts`.
+    ThrottlerModule.forRoot(throttlerOptions),
+
     ScheduleModule.forRoot(),
     AccessModule,
     SupabaseModule,
@@ -88,6 +94,6 @@ import { AppVersionModule } from './app-version/app-version.module';
     AppVersionModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
 export class AppModule {}

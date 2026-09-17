@@ -181,13 +181,20 @@ export class UserController {
     @Param('userId') userId: string,
     @Body('param') param: string,
     @Req() req: authReq.AuthenticatedRequest,
+    // The coach's client list asks for plan status and last workout; other
+    // callers only need the names and skip the extra queries.
+    @Body('details') details?: boolean,
   ) {
     this.accessService.assertSelf(req.user.id, userId);
     // `param` is used as a column name; only these two are allowed.
     if (param !== 'coach_id' && param !== 'user_id') {
       throw new BadRequestException('param must be coach_id or user_id');
     }
-    return this.userService.getAssignedUsersToCoach(userId, param);
+    return this.userService.getAssignedUsersToCoach(
+      userId,
+      param,
+      details === true,
+    );
   }
 
   @Post('coach-assigned-users/:userId/update/:relationId')

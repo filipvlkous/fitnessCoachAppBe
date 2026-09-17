@@ -26,6 +26,7 @@ import {
   SaveConsentsDto,
 } from './dto/consent.dto';
 import { BecomeCoachDto, UpdateProfileDto } from './dto/user.dto';
+import { asUtc } from 'utils/as-utc';
 import { compressImage } from 'utils/compress-image';
 import { removeChatPhotosOf } from 'src/chat/chat-photo';
 
@@ -176,13 +177,18 @@ export class UserService {
     return true;
   }
 
-  async getAssignedUsersToCoach(userId: string, param: string) {
+  async getAssignedUsersToCoach(
+    userId: string,
+    param: string,
+    withDetails = false,
+  ) {
     const { data, error } = await this.supabaseService.supabase
       .from('coach_user_relations')
       .select(
         `
     id,
     status,
+    created_at,
     user:coach_user_relations_user_id_fkey (
       user_id:id,
       first_name,
@@ -198,7 +204,74 @@ export class UserService {
       throw new Error(`Error fetching assigned users: ${error.message}`);
     }
 
-    return data;
+    if (!withDetails || param !== 'coach_id' || !data?.length) return data;
+    return this.withClientDetails(data);
+  }
+
+  // For the coach's client list: whether each approved client has an active
+  // program, and when they last started a workout. Both are extras — a failed
+  // query leaves its field null and the list still loads. One small query per
+  // client for the last workout, which is fine at a coach's scale.
+  private async withClientDetails<T extends { status: string; user: unknown }>(
+    relations: T[],
+  ) {
+    const clientIdOf = (relation: T): string | null => {
+      const user = (
+        Array.isArray(relation.user) ? relation.user[0] : relation.user
+      ) as { user_id?: string } | null;
+      return user?.user_id ?? null;
+    };
+    const clientIds = relations
+      .filter((relation) => relation.status === 'approved')
+      .map(clientIdOf)
+      .filter((id): id is string => Boolean(id));
+    if (clientIds.length === 0) return relations;
+
+    const supabase = this.supabaseService.supabase;
+    const [programs, ...latest] = await Promise.all([
+      supabase
+        .from('user_workout_programs')
+        .select('user_id')
+        .in('user_id', clientIds)
+        .eq('status', 'active'),
+      ...clientIds.map((clientId) =>
+        supabase
+          .from('workout_logs')
+          .select('created_at, user_workout_programs!inner ( user_id )')
+          .eq('user_workout_programs.user_id', clientId)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+      ),
+    ]);
+
+    if (programs.error) {
+      console.error('Error fetching client programs:', programs.error);
+    }
+    const withProgram = programs.error
+      ? null
+      : new Set((programs.data ?? []).map((row) => row.user_id as string));
+
+    const lastWorkout = new Map<string, string | null>();
+    clientIds.forEach((clientId, i) => {
+      const { data: log, error: logError } = latest[i];
+      if (logError) {
+        console.error('Error fetching last workout:', logError);
+        return;
+      }
+      const createdAt = (log as { created_at?: string } | null)?.created_at;
+      lastWorkout.set(clientId, createdAt ? asUtc(createdAt) : null);
+    });
+
+    return relations.map((relation) => {
+      const clientId = clientIdOf(relation);
+      if (relation.status !== 'approved' || !clientId) return relation;
+      return {
+        ...relation,
+        has_active_program: withProgram ? withProgram.has(clientId) : null,
+        last_workout_at: lastWorkout.get(clientId) ?? null,
+      };
+    });
   }
 
   private async getRelation(relationId: string) {

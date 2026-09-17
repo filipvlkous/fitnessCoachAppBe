@@ -993,6 +993,15 @@ export class ProgramsService {
   // ============================================
 
   // Add workout comment
+  async rateWorkout(workoutLogId: string, rpe: number) {
+    const { error } = await this.supabase
+      .from('workout_logs')
+      .update({ rpe })
+      .eq('id', workoutLogId);
+
+    if (error) throw new InternalServerErrorException(error.message);
+  }
+
   async addWorkoutComment(
     workoutLogId: string,
     userId: string,

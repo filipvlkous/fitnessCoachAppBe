@@ -10,6 +10,11 @@ export class CreateExerciseDto {
   @IsString()
   muscle_group!: string;
 
+  // Optional second group. `null` (or omitting it) means the exercise has one.
+  @IsOptional()
+  @IsString()
+  muscle_group_2?: string | null;
+
   @IsString()
   description?: string;
 
@@ -28,6 +33,11 @@ export class UpdateExerciseCatalogDto {
 
   @IsString()
   muscle_group?: string;
+
+  // Omit to leave it alone, send null to clear it.
+  @IsOptional()
+  @IsString()
+  muscle_group_2?: string | null;
 
   @IsString()
   description?: string;
