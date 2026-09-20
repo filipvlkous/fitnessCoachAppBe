@@ -1043,6 +1043,263 @@ export class ProgramsService {
     return data;
   }
 
+  /**
+   * A workout the athlete already imported from their phone's health store,
+   * looked up by the store's own id. Scoped to the owner, so one athlete can
+   * never read another's row by presenting its id.
+   */
+  private async findImportedCardio(
+    userId: string,
+    source: string,
+    externalId: string,
+  ) {
+    const { data, error } = await this.supabase
+      .from('cardio_logs')
+      .select(
+        `
+        id,
+        cardio_type,
+        duration_minutes,
+        distance_km,
+        intensity,
+        source,
+        external_id,
+        workout_log_id,
+        workout_logs!inner ( user_workout_programs!inner ( user_id ) )
+      `,
+      )
+      .eq('source', source)
+      .eq('external_id', externalId)
+      .eq('workout_logs.user_workout_programs.user_id', userId)
+      .limit(1)
+      .maybeSingle();
+
+    if (error) throw new InternalServerErrorException(error.message);
+    if (!data) return null;
+
+    // Named one by one rather than spread: the row carries the ownership join
+    // too, and that is nobody's business outside this method.
+    const row = data as {
+      id: string;
+      cardio_type: string;
+      duration_minutes: number | null;
+      distance_km: number | null;
+      intensity: string | null;
+      source: string | null;
+      external_id: string | null;
+      workout_log_id: string;
+    };
+
+    return {
+      workout_log_id: row.workout_log_id,
+      cardio: {
+        id: row.id,
+        cardio_type: row.cardio_type,
+        duration_minutes: row.duration_minutes,
+        distance_km: row.distance_km,
+        intensity: row.intensity,
+        source: row.source,
+        external_id: row.external_id,
+      },
+    };
+  }
+
+  /**
+   * Cardio with no assigned workout behind it — a run on a rest day, or an
+   * athlete who has no plan at all.
+   *
+   * A cardio entry still needs a workout log to hang off, so one is opened
+   * against the athlete's active program with a null `program_day_id`. That
+   * keeps every authorization and read path intact: the owner is still
+   * resolved through `user_workout_programs.user_id`, and the joins on
+   * `user_program_days` are all left joins that simply yield no day name.
+   *
+   * One such log per day. A second entry on the same day joins the first
+   * rather than opening a second session, so the streak, the leaderboard and
+   * the coach's feed each count the day once.
+   */
+  async logSoloCardio(
+    userId: string,
+    dto: {
+      id?: string;
+      cardio_type: string;
+      duration_minutes: number;
+      distance_km?: number | null;
+      intensity?: string | null;
+      workout_date: string;
+      source?: 'apple_health' | 'health_connect';
+      external_id?: string;
+    },
+  ) {
+    // An import the athlete already accepted — the same run offered twice, or
+    // two phones racing — is answered with the row that is already there
+    // rather than a second copy. The unique index is what makes this safe
+    // under a race; this lookup just saves the round trip in the common case.
+    if (dto.external_id && dto.source) {
+      const already = await this.findImportedCardio(
+        userId,
+        dto.source,
+        dto.external_id,
+      );
+      if (already) return already;
+    }
+
+    // Idempotent: returns the athlete's active program when they have one —
+    // coach-made or their own — and only creates an empty one when they have
+    // none at all.
+    const program = (await this.createSoloProgram(userId)) as {
+      id: string;
+      coach_id: string | null;
+    };
+    const workoutDate = new Date(dto.workout_date).toISOString();
+
+    const { data: existing, error: existingError } = await this.supabase
+      .from('workout_logs')
+      .select('id')
+      .eq('user_workout_program_id', program.id)
+      .is('program_day_id', null)
+      .eq('workout_date', workoutDate)
+      .limit(1)
+      .maybeSingle();
+
+    if (existingError) {
+      throw new InternalServerErrorException(existingError.message);
+    }
+
+    let workoutLogId = existing?.id as string | undefined;
+
+    if (!workoutLogId) {
+      const { data, error } = await this.supabase
+        .from('workout_logs')
+        .insert({
+          // Denormalized copy of whoever owns the program, as everywhere else.
+          coach_id: program.coach_id ?? null,
+          program_day_id: null,
+          user_workout_program_id: program.id,
+          workout_date: workoutDate,
+          // Nothing more is coming — the cardio is the whole session. Marking
+          // it done here is what lets it count towards the streak, the
+          // leaderboard and the monthly draw. Deliberately not routed through
+          // `completeWorkout`: that pushes the coach a notification every
+          // time, and a logged walk is not worth one.
+          completed: true,
+        })
+        .select('id')
+        .single();
+
+      if (error) throw new InternalServerErrorException(error.message);
+      workoutLogId = data.id as string;
+    }
+
+    // Written here rather than through `logCardio` for the conflict mode: a
+    // replayed offline entry has to come back with its row, and the columns
+    // all come from the same client-generated row, so overwriting it with
+    // itself is a no-op.
+    const { data: cardio, error: cardioError } = await this.supabase
+      .from('cardio_logs')
+      .upsert(
+        {
+          ...(dto.id ? { id: dto.id } : {}),
+          workout_log_id: workoutLogId,
+          cardio_type: dto.cardio_type,
+          duration_minutes: dto.duration_minutes,
+          distance_km: dto.distance_km ?? null,
+          intensity: dto.intensity ?? null,
+          source: dto.source ?? null,
+          external_id: dto.external_id ?? null,
+        },
+        { onConflict: 'id' },
+      )
+      .select(
+        'id, cardio_type, duration_minutes, distance_km, intensity, source, external_id',
+      )
+      .single();
+
+    if (cardioError) {
+      // 23505: another request wrote this same imported workout between the
+      // lookup above and this insert. Whoever lost the race still wants the
+      // row, not an error.
+      if (cardioError.code === '23505' && dto.external_id && dto.source) {
+        const raced = await this.findImportedCardio(
+          userId,
+          dto.source,
+          dto.external_id,
+        );
+        if (raced) return raced;
+      }
+      throw new InternalServerErrorException(cardioError.message);
+    }
+
+    // The session lasted as long as the cardio in it. Summed from the rows
+    // rather than added up as they arrive, so a replayed entry cannot inflate
+    // it. Best-effort: the entry itself is already saved, and a failure here
+    // only costs the duration shown on the history card.
+    const { data: allCardio } = await this.supabase
+      .from('cardio_logs')
+      .select('duration_minutes')
+      .eq('workout_log_id', workoutLogId);
+
+    if (allCardio) {
+      const total = allCardio.reduce(
+        (sum, row) => sum + ((row.duration_minutes as number | null) ?? 0),
+        0,
+      );
+      await this.supabase
+        .from('workout_logs')
+        .update({ duration_minutes: total })
+        .eq('id', workoutLogId);
+    }
+
+    return { workout_log_id: workoutLogId, cardio };
+  }
+
+  /**
+   * Every cardio entry the athlete logged on one day, whatever it hangs off —
+   * a standalone entry and one added inside an assigned workout both count, so
+   * the home screen shows the day's real total.
+   */
+  async getDayCardio(userId: string, date: string) {
+    const day = new Date(date);
+    const next = new Date(day);
+    next.setUTCDate(day.getUTCDate() + 1);
+
+    const { data, error } = await this.supabase
+      .from('cardio_logs')
+      .select(
+        `
+        id,
+        cardio_type,
+        duration_minutes,
+        distance_km,
+        intensity,
+        source,
+        external_id,
+        workout_logs!inner (
+          workout_date,
+          user_workout_programs!inner ( user_id )
+        )
+      `,
+      )
+      .eq('workout_logs.user_workout_programs.user_id', userId)
+      .gte('workout_logs.workout_date', day.toISOString())
+      .lt('workout_logs.workout_date', next.toISOString())
+      .order('created_at', { ascending: true });
+
+    if (error) throw new InternalServerErrorException(error.message);
+
+    return (data ?? []).map((row) => ({
+      id: row.id as string,
+      cardio_type: row.cardio_type as string,
+      duration_minutes: row.duration_minutes as number | null,
+      distance_km: row.distance_km as number | null,
+      intensity: row.intensity as string | null,
+      source: row.source as string | null,
+      // What the card matches today's health-store workouts against, so one
+      // already accepted is not offered again.
+      external_id: row.external_id as string | null,
+    }));
+  }
+
   async logCardio(dto: {
     id?: string;
     workout_log_id: string;

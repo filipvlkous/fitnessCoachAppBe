@@ -7,11 +7,13 @@ import {
   Delete,
   Body,
   Param,
+  Query,
   Req,
   Inject,
   UseInterceptors,
   UseGuards,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import {
   CACHE_MANAGER,
@@ -517,6 +519,38 @@ export class ProgramsController {
       this.invalidateUserCache(req.user.id),
     ]);
     return result;
+  }
+
+  // Cardio with no assigned workout behind it — a rest-day run, or an athlete
+  // with no plan at all. The auth guard is the whole authorization story: the
+  // route only ever writes against the caller's own program, like POST /self.
+  @Post('workouts/cardio')
+  async logSoloCardio(
+    @Body() cardioDto: dto.LogSoloCardioDto,
+    @Req() req: authReq.AuthenticatedRequest,
+  ) {
+    const result = await this.programsService.logSoloCardio(
+      req.user.id,
+      cardioDto,
+    );
+
+    // The entry opens or completes a workout log, so the streak and the
+    // history the home screen reads are both stale now.
+    await this.invalidateUserCache(req.user.id);
+    return result;
+  }
+
+  // Deliberately uncached: it changes with every entry the athlete adds, and a
+  // stale total on the home screen would read as the entry having been lost.
+  @Get('workouts/cardio')
+  async getDayCardio(
+    @Query('date') date: string,
+    @Req() req: authReq.AuthenticatedRequest,
+  ) {
+    if (!date || Number.isNaN(new Date(date).getTime())) {
+      throw new BadRequestException('A valid `date` is required');
+    }
+    return this.programsService.getDayCardio(req.user.id, date);
   }
 
   @Put('workouts/:workout_id/complete')

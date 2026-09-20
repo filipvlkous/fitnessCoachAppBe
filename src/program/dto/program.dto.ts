@@ -376,6 +376,47 @@ export class LogCardioDto {
   intensity?: string | null;
 }
 
+// Cardio the athlete did with no assigned workout behind it. Carries the date
+// rather than trusting the server clock, so a session logged just before
+// midnight — or offline and replayed the next day — lands on the day it
+// happened.
+export class LogSoloCardioDto {
+  // Client-generated row id; see ExerciseSetDto.id.
+  @IsOptional()
+  @IsUUID()
+  id?: string;
+
+  @IsString()
+  cardio_type: string;
+
+  @IsNumber()
+  @Min(1)
+  duration_minutes: number;
+
+  @IsNumber()
+  @IsOptional()
+  distance_km?: number | null;
+
+  @IsString()
+  @IsOptional()
+  intensity?: string | null;
+
+  @IsDateString()
+  workout_date: string;
+
+  // Set when the entry was imported from the phone's health store rather than
+  // typed in. Together with `external_id` it makes the import idempotent.
+  @IsOptional()
+  @IsEnum(['apple_health', 'health_connect'])
+  source?: 'apple_health' | 'health_connect';
+
+  // The health store's own id for the workout: HealthKit's sample uuid, or
+  // Health Connect's `metadata.id`.
+  @IsOptional()
+  @IsString()
+  external_id?: string;
+}
+
 // ============================================
 // COMMENT DTOs
 // ============================================
