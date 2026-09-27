@@ -10,6 +10,7 @@ import { createHash } from 'crypto';
 import { SupabaseService } from 'src/supabase/supabase.service';
 import { AccessService } from 'src/auth/access.service';
 import { NotificationsService } from 'src/notifications/notifications.service';
+import { UserService } from 'src/user/user.service';
 import {
   dismissalSurvives,
   HALF_WINDOW_DAYS,
@@ -17,6 +18,8 @@ import {
   RetentionFactor,
   RetentionSignals,
   scoreClient,
+  SignalAccess,
+  signalsWithinConsent,
   WINDOW_DAYS,
 } from './retention.scoring';
 
@@ -142,6 +145,7 @@ export class RetentionService {
     private readonly supabaseService: SupabaseService,
     private readonly accessService: AccessService,
     private readonly notificationsService: NotificationsService,
+    private readonly userService: UserService,
   ) {
     this.genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   }
@@ -358,6 +362,14 @@ export class RetentionService {
   ): Promise<void> {
     const clientIds = [...new Set(pairs.map((p) => p.clientId))];
     const signalsByPair = await this.collectSignals(pairs, clientIds);
+    const accessByClient = new Map<string, SignalAccess>(
+      await Promise.all(
+        clientIds.map(
+          async (id) =>
+            [id, await this.userService.getCoachDataAccess(id)] as const,
+        ),
+      ),
+    );
     const stored = await this.fetchStored(pairs);
     const now = new Date().toISOString();
 
@@ -367,8 +379,23 @@ export class RetentionService {
 
     for (const pair of pairs) {
       const key = `${pair.coachId}:${pair.clientId}`;
-      const signals = signalsByPair.get(key);
-      if (!signals) continue;
+      const collected = signalsByPair.get(key);
+      if (!collected) continue;
+
+      const signals = signalsWithinConsent(
+        collected,
+        accessByClient.get(pair.clientId)!,
+      );
+      if (!signals) {
+        // Sharing withdrawn: the coach must stop seeing a score built from
+        // it, including the one already stored.
+        await this.supabase
+          .from('client_retention')
+          .delete()
+          .eq('coach_id', pair.coachId)
+          .eq('user_id', pair.clientId);
+        continue;
+      }
 
       const { score, band, factors } = scoreClient(signals);
       const inputsHash = this.hashSignals(signals);

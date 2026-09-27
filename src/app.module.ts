@@ -27,6 +27,7 @@ import { RetentionModule } from './retention/retention.module';
 import { LeaderboardModule } from './leaderboard/leaderboard.module';
 import { RewardsModule } from './rewards/rewards.module';
 import { AppVersionModule } from './app-version/app-version.module';
+import { ReportsModule } from './reports/reports.module';
 import { throttlerOptions } from './throttler.config';
 
 @Module({
@@ -92,6 +93,7 @@ import { throttlerOptions } from './throttler.config';
     LeaderboardModule,
     RewardsModule,
     AppVersionModule,
+    ReportsModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],

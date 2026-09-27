@@ -25,6 +25,7 @@ export const CONSENT_KEYS = [
   'coachSharing',
   'analytics',
   'marketing',
+  'leaderboard',
 ] as const;
 
 export type ConsentKey = (typeof CONSENT_KEYS)[number];

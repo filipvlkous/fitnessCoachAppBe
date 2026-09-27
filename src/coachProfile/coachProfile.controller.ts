@@ -220,7 +220,9 @@ export class CoachProfileController {
   }
 
   // The reviewer is always the authenticated user; the client cannot review
-  // on someone else's behalf.
+  // on someone else's behalf. Only a connected client may review: the terms
+  // tell users reviews are verified, and claiming a check that does not run is
+  // an unfair commercial practice (z. 634/1992 Sb., § 5).
   @Post('review/:coachId')
   async addReview(
     @Param('coachId', ParseUUIDPipe) coachId: string,
@@ -229,6 +231,9 @@ export class CoachProfileController {
   ) {
     if (coachId === req.user.id) {
       throw new ForbiddenException('You cannot review yourself');
+    }
+    if (!(await this.accessService.isCoachOf(coachId, req.user.id))) {
+      throw new ForbiddenException('Only connected clients can review a coach');
     }
     return await this.coachProfileService.addReview(
       coachId,

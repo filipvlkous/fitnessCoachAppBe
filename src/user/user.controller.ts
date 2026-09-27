@@ -15,6 +15,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { Throttle } from '@nestjs/throttler';
 import { MAX_IMAGE_BYTES, mediaFileFilter } from 'utils/upload-limits';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { UserService } from './user.service';
@@ -46,6 +47,23 @@ export class UserController {
     // Account deletion is strictly self-service.
     this.accessService.assertSelf(req.user.id, id);
     return await this.userService.deleteUser(id);
+  }
+
+  /**
+   * GET /userController/user/:id/export
+   *
+   * Everything this account owns, as JSON (GDPR Art. 15 and 20). Self only.
+   * Throttled like the other expensive routes: it reads every table the
+   * account touches.
+   */
+  @Get('user/:id/export')
+  @Throttle({ heavy: { limit: 3, ttl: 60_000 } })
+  async exportUserData(
+    @Param('id') id: string,
+    @Req() req: authReq.AuthenticatedRequest,
+  ) {
+    this.accessService.assertSelf(req.user.id, id);
+    return this.userService.exportUserData(id);
   }
 
   @Get('user/:id')

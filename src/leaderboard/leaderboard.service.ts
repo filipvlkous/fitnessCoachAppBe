@@ -222,10 +222,16 @@ export class LeaderboardService {
       throw new Error(`Error fetching coach roster: ${error.message}`);
     }
 
+    const optedIn = await this.leaderboardConsenters(
+      coachId,
+      (data ?? []).map((row) => row.user_id as string).filter(Boolean),
+    );
+
     const rosters = new Map<string, RosterMember[]>();
 
     for (const row of data ?? []) {
       if (!row.coach_id || !row.user_id) continue;
+      if (!optedIn.has(row.user_id as string)) continue;
 
       const user = one(row.user as NameRow | NameRow[] | null);
       const roster = rosters.get(row.coach_id as string) ?? [];
@@ -238,6 +244,38 @@ export class LeaderboardService {
     }
 
     return rosters;
+  }
+
+  /**
+   * Who has a standing `leaderboard` consent. The board shows a client's
+   * training and food-logging numbers to the other clients of the same coach —
+   * health data going to people who are neither us nor the coach — so it is
+   * opt-in (GDPR Art. 9(2)(a)), and silence means off the board.
+   *
+   * One group is narrowed to its roster; the award job, which scores every
+   * group, reads all consenters instead of naming thousands of ids in a URL.
+   */
+  private async leaderboardConsenters(
+    coachId?: string,
+    userIds: string[] = [],
+  ): Promise<Set<string>> {
+    if (coachId && userIds.length === 0) return new Set();
+
+    const rows = await this.fetchAll<{ user_id: string }>(
+      'leaderboard consents',
+      (from, to) => {
+        let query = this.supabase
+          .from('user_consents_current')
+          .select('user_id')
+          .eq('kind', 'consent')
+          .eq('consent_key', 'leaderboard')
+          .eq('granted', true);
+        if (coachId) query = query.in('user_id', userIds);
+        return query.order('user_id').range(from, to);
+      },
+    );
+
+    return new Set(rows.map((row) => row.user_id));
   }
 
   private async scoreMonth(

@@ -1,3 +1,4 @@
+import { PostgrestError } from '@supabase/supabase-js';
 import {
   BadRequestException,
   ForbiddenException,
@@ -480,6 +481,26 @@ export class UserService {
    *
    * A coach's clients keep the training assigned to them — see the SQL.
    */
+  /**
+   * Everything one account owns, from `export_user_data`
+   * (`sql/2026-09-26_legal_compliance.sql`) — the same list of tables
+   * `delete_user_account` erases. Uploaded files are listed by path, not
+   * inlined: the app already shows them, and base64 would balloon the export.
+   */
+  async exportUserData(userId: string): Promise<unknown> {
+    const { data, error } = (await this.supabaseService.supabase.rpc(
+      'export_user_data',
+      { p_user_id: userId },
+    )) as { data: unknown; error: PostgrestError | null };
+
+    if (error) {
+      throw new InternalServerErrorException(
+        `Error exporting user data: ${error.message}`,
+      );
+    }
+    return data;
+  }
+
   async deleteUser(userId: string) {
     // auth.admin requires the service-role client (anon key gets a 403).
     const adminClient = this.supabaseService.getAdminClient();

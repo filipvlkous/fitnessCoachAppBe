@@ -1,3 +1,4 @@
+import { PostgrestError } from '@supabase/supabase-js';
 import {
   Injectable,
   NotFoundException,
@@ -130,68 +131,43 @@ export class CoachProfileService {
       minPrice,
       maxPrice,
       minRating,
+      lat,
+      lng,
+      radiusKm,
+      sort = 'rating',
       limit = 20,
       offset = 0,
     } = dto;
 
-    // Start from a view/RPC that already has avg_rating & review_count joined.
-    // If you don't have the view yet, see the migration snippet below.
-    let query = this.supabaseService.supabase
-      .from('coach_profiles_with_stats') // ← view defined in migration below
-      .select(
-        `coach_id,
-       specialty,
-       hourly_rate,
-       first_name,
-       last_name,
-       gym,
-       avatar_url,
-       avg_rating,
-       review_count`,
-      )
-      .range(offset, offset + limit - 1)
-      .eq('is_visible', true);
-
-    // ── free-text: specialty / bio / gym ──────────────────────────────────
-    if (name) {
-      // ilike on multiple columns using Supabase's `or` filter
-      query = query.or(
-        `specialty.ilike.%${name}%,bio.ilike.%${name}%,gym.ilike.%${name}%`,
-      );
-    }
-
-    // ── location (gym address) ────────────────────────────────────────────
-    if (location) {
-      query = query.ilike('gym', `%${location}%`);
-    }
-
-    // ── price range ───────────────────────────────────────────────────────
-    if (minPrice !== undefined) {
-      query = query.gte('hourly_rate', minPrice);
-    }
-    if (maxPrice !== undefined) {
-      query = query.lte('hourly_rate', maxPrice);
-    }
-
-    // ── minimum average rating ────────────────────────────────────────────
-    if (minRating !== undefined) {
-      query = query.gte('avg_rating', minRating);
-    }
-
-    // ── default sort: highest rated first, then cheapest ─────────────────
-    query = query
-      .order('avg_rating', { ascending: false, nullsFirst: false })
-      .order('hourly_rate', { ascending: true });
-
-    const { data, error, count } = await query;
+    // Filtering, distance and sorting live in the search_coaches RPC
+    // (sql/2026-09-27_coach_search.sql).
+    const { data, error } = (await this.supabaseService.supabase.rpc(
+      'search_coaches',
+      {
+        p_name: name?.trim() || null,
+        p_location: location?.trim() || null,
+        p_min_price: minPrice ?? null,
+        p_max_price: maxPrice ?? null,
+        p_min_rating: minRating ?? null,
+        p_lat: lat ?? null,
+        p_lng: lng ?? null,
+        p_radius_km: radiusKm ?? null,
+        p_sort: sort,
+        p_limit: limit,
+        p_offset: offset,
+      },
+    )) as {
+      data: { total: number; data: unknown[] } | null;
+      error: PostgrestError | null;
+    };
 
     if (error) {
       throw new InternalServerErrorException(error.message);
     }
 
     return {
-      data: data ?? [],
-      total: count ?? 0,
+      data: data?.data ?? [],
+      total: data?.total ?? 0,
       limit,
       offset,
     };
@@ -324,7 +300,7 @@ export class CoachProfileService {
   async getReviews(coachId: string) {
     const { data, error } = await this.supabaseService.supabase
       .from('coach_reviews')
-      .select('rating, comment, created_at')
+      .select('id, rating, comment, created_at')
       .eq('coach_id', coachId);
 
     if (error) {

@@ -2,6 +2,7 @@ import {
   dismissalSurvives,
   RetentionSignals,
   scoreClient,
+  signalsWithinConsent,
 } from './retention.scoring';
 
 /**
@@ -157,5 +158,47 @@ describe('dismissalSurvives', () => {
   it('is cleared once the client is out of trouble, so the next drift shows', () => {
     expect(dismissalSurvives(YESTERDAY, 'at_risk', 'ok')).toBe(false);
     expect(dismissalSurvives(YESTERDAY, 'watch', 'new')).toBe(false);
+  });
+});
+
+describe('signalsWithinConsent', () => {
+  const all = { workouts: true, nutrition: true, bodyMetrics: true };
+
+  it('passes everything through when every scope is shared', () => {
+    expect(signalsWithinConsent(base, all)).toEqual(base);
+  });
+
+  it('gives no signals at all without the workouts scope', () => {
+    // Training is what the score is about; a score without it would be built
+    // from what little is left and still read as a verdict on the client.
+    expect(signalsWithinConsent(base, { ...all, workouts: false })).toBeNull();
+  });
+
+  it('drops food logging when nutrition is not shared', () => {
+    const result = signalsWithinConsent(
+      signals({ mealDaysRecent: 0, mealDaysPrevious: 12 }),
+      { ...all, nutrition: false },
+    )!;
+
+    expect(result.everLoggedMeals).toBe(false);
+    expect(result.daysSinceLastMeal).toBeNull();
+    expect(result.mealDaysRecent).toBe(0);
+    expect(result.mealDaysPrevious).toBe(0);
+    expect(
+      scoreClient(result).factors.some((f) => f.code === 'logging_dropped'),
+    ).toBe(false);
+  });
+
+  it('drops weigh-ins when body metrics are not shared', () => {
+    const result = signalsWithinConsent(signals({ daysSinceLastWeighIn: 40 }), {
+      ...all,
+      bodyMetrics: false,
+    })!;
+
+    expect(result.everWeighedIn).toBe(false);
+    expect(result.daysSinceLastWeighIn).toBeNull();
+    expect(
+      scoreClient(result).factors.some((f) => f.code === 'no_weigh_in'),
+    ).toBe(false);
   });
 });

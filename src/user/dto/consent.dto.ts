@@ -54,6 +54,11 @@ export class ConsentsDto {
   @ValidateNested()
   @Type(() => ConsentRecordDto)
   marketing?: ConsentRecordDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ConsentRecordDto)
+  leaderboard?: ConsentRecordDto;
 }
 
 /** Scope of the `coachSharing` consent. Same shape, separate vocabulary. */

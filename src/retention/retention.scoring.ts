@@ -70,6 +70,42 @@ function clamp01(value: number): number {
  * fortnight. Someone training twice a week to a twice-a-week program is not
  * at risk for training less than someone else.
  */
+/** What the client lets their coach read — `UserService.getCoachDataAccess`. */
+export interface SignalAccess {
+  workouts: boolean;
+  nutrition: boolean;
+  bodyMetrics: boolean;
+}
+
+/**
+ * The signals a coach is allowed to have scored for them.
+ *
+ * The score and its note are shown to the coach, so they may only be built
+ * from what the client shares with that coach (GDPR Art. 9 — the coachSharing
+ * consent and its scopes). Without workouts there is nothing honest left to
+ * score, so no signals at all; without food or weigh-ins those habits read as
+ * "never had them", which the scoring already leaves out.
+ */
+export function signalsWithinConsent(
+  signals: RetentionSignals,
+  access: SignalAccess,
+): RetentionSignals | null {
+  if (!access.workouts) return null;
+
+  const result = { ...signals };
+  if (!access.nutrition) {
+    result.daysSinceLastMeal = null;
+    result.mealDaysRecent = 0;
+    result.mealDaysPrevious = 0;
+    result.everLoggedMeals = false;
+  }
+  if (!access.bodyMetrics) {
+    result.daysSinceLastWeighIn = null;
+    result.everWeighedIn = false;
+  }
+  return result;
+}
+
 export function scoreClient(signals: RetentionSignals): {
   score: number | null;
   band: RetentionBand;
