@@ -382,17 +382,51 @@ export class UserService {
     return data;
   }
 
-  async removeCoachRelationByUserId(userId: string, programId?: string) {
-    // The chat goes with the relation. This removes every relation the user
-    // has, and `chat_messages` is keyed by the coach/client pair rather than by
-    // the relation row, so every message where they are the client belongs to a
-    // relation about to disappear. Deleted first: a failure here leaves the
+  /**
+   * Removes a user's coach relation and the chat that goes with it.
+   *
+   * A coach (`requesterId` other than `userId`) removes only their own
+   * relation and chat; a client may share coaches, and one of them must not be
+   * able to cut the others off. The user themselves removes all of theirs.
+   */
+  async removeCoachRelationByUserId(
+    userId: string,
+    requesterId: string,
+    programId?: string,
+  ) {
+    const coachId = requesterId === userId ? null : requesterId;
+
+    // Checked before anything is deleted: the id comes from the URL, and the
+    // program days removed below must be this user's, not whoever's id was sent.
+    if (programId) {
+      const { data: program, error: programError } =
+        await this.supabaseService.supabase
+          .from('user_workout_programs')
+          .select('id')
+          .eq('id', programId)
+          .eq('user_id', userId)
+          .maybeSingle();
+
+      if (programError) {
+        throw new InternalServerErrorException(
+          `Error checking program: ${programError.message}`,
+        );
+      }
+      if (!program) throw new NotFoundException('Program not found');
+    }
+
+    // The chat goes with the relation. `chat_messages` is keyed by the
+    // coach/client pair rather than by the relation row, so the same filter
+    // picks out exactly the messages of the relations about to disappear.
+    // Deleted first: a failure here leaves the
     // relation in place and the call retryable, where messages left behind
     // would resurface in the chat if the two ever connect again.
-    const { error: chatError } = await this.supabaseService.supabase
+    let chatDelete = this.supabaseService.supabase
       .from('chat_messages')
       .delete()
       .eq('user_id', userId);
+    if (coachId) chatDelete = chatDelete.eq('coach_id', coachId);
+    const { error: chatError } = await chatDelete;
 
     if (chatError) {
       throw new InternalServerErrorException(
@@ -400,11 +434,12 @@ export class UserService {
       );
     }
 
-    const { data, error } = await this.supabaseService.supabase
+    let relationDelete = this.supabaseService.supabase
       .from('coach_user_relations')
       .delete()
-      .eq('user_id', userId)
-      .select();
+      .eq('user_id', userId);
+    if (coachId) relationDelete = relationDelete.eq('coach_id', coachId);
+    const { data, error } = await relationDelete.select();
 
     if (error) {
       throw new InternalServerErrorException(
@@ -785,59 +820,6 @@ export class UserService {
       consents,
       coachPermissions,
     };
-  }
-
-  /**
-   * What a connected coach may actually read about this user, per scope.
-   *
-   * This is the ANDing the ledger deliberately does not do: a `coachScope` row
-   * only means something while the `coachSharing` consent is standing, so
-   * withdrawing that one consent closes every scope at once without having to
-   * rewrite the individual scope decisions.
-   *
-   * Fails closed on every unknown: a scope with no recorded decision, a user who
-   * never went through the consent screen, or a missing `coachSharing` row all
-   * come back false. Silence is not permission.
-   */
-  async getCoachDataAccess(
-    userId: string,
-  ): Promise<Record<CoachDataScope, boolean>> {
-    const denied = Object.fromEntries(
-      COACH_DATA_SCOPES.map((scope) => [scope, false]),
-    ) as Record<CoachDataScope, boolean>;
-
-    const { data, error } = await this.supabaseService.supabase
-      .from('user_consents_current')
-      .select('kind, consent_key, granted')
-      .eq('user_id', userId);
-
-    if (error) {
-      throw new InternalServerErrorException(
-        `Error fetching coach permissions: ${error.message}`,
-      );
-    }
-
-    const rows = (data ?? []) as Pick<
-      CurrentConsentRow,
-      'kind' | 'consent_key' | 'granted'
-    >[];
-
-    const sharing = rows.some(
-      (row) =>
-        row.kind === CONSENT_KIND &&
-        row.consent_key === ('coachSharing' satisfies ConsentKey) &&
-        row.granted,
-    );
-    if (!sharing) return denied;
-
-    for (const row of rows) {
-      if (row.kind !== COACH_SCOPE_KIND) continue;
-      const scope = row.consent_key as CoachDataScope;
-      // Guard against a key the ledger holds but this build does not know.
-      if (scope in denied) denied[scope] = row.granted;
-    }
-
-    return denied;
   }
 
   /**

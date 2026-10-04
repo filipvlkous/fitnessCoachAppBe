@@ -5,9 +5,7 @@ import { SupabaseModule } from 'src/supabase/supabase.module';
 import { UserModule } from 'src/user/user.module';
 
 @Module({
-  // UserModule for the consent read behind /coaches/client/:id/permissions —
-  // the consent ledger stays owned by UserService rather than being queried
-  // from a second place.
+  // UserModule for AccessRequestService, behind the coach's access requests.
   imports: [SupabaseModule, UserModule],
   controllers: [CoachProfileController],
   providers: [CoachProfileService],

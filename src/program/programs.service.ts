@@ -307,17 +307,17 @@ export class ProgramsService {
   }
 
   /**
-   * Delete a program and everything hanging off it.
+   * "Delete" a program: end it, keeping everything the client logged on it.
+   *
+   * The program is marked `completed` rather than removed. Workout logs hang
+   * off the program (and its days) and are owned through it, so removing it
+   * meant removing the client's whole history with it — streaks, leaderboard,
+   * the coach's feed. Every "the active program" read filters on
+   * `status = 'active'`, so an ended program drops out of the plan screens and
+   * a new one can be created, while history reads still find its logs.
    *
    * Returns the owner IDs so the controller can invalidate their caches, plus
-   * the days it removed so the per-day cache entries can go with them.
-   *
-   * The children are deleted explicitly, in dependency order, rather than left
-   * to the database: `workout_logs` and `user_program_days` both point at the
-   * program, and whether those foreign keys cascade is not something this repo
-   * can see (the schema lives in Supabase). Without this, deleting a program a
-   * client had ever trained on would fail with a foreign-key violation and
-   * surface as a 500.
+   * the program's days so the per-day cache entries can go with them.
    */
   async deleteProgram(programId: string) {
     const { data: program } = await this.supabase
@@ -334,26 +334,12 @@ export class ProgramsService {
       .select('id, day_number')
       .eq('program_id', programId);
 
-    // Sessions first — they reference both the program and its days.
-    const { error: logsError } = await this.supabase
-      .from('workout_logs')
-      .delete()
-      .eq('user_workout_program_id', programId);
-
-    if (logsError) throw new InternalServerErrorException(logsError.message);
-
-    // Then the days, which take their assigned exercises with them (same
-    // cascade `deleteProgramDay` relies on).
-    const { error: daysError } = await this.supabase
-      .from('user_program_days')
-      .delete()
-      .eq('program_id', programId);
-
-    if (daysError) throw new InternalServerErrorException(daysError.message);
-
     const { error } = await this.supabase
       .from('user_workout_programs')
-      .delete()
+      .update({
+        status: 'completed',
+        end_date: new Date().toISOString().split('T')[0],
+      })
       .eq('id', programId);
 
     if (error) throw new InternalServerErrorException(error.message);

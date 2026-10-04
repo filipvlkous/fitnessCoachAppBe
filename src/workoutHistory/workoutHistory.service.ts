@@ -32,7 +32,27 @@ export interface CoachFeedRow {
 export class WorkoutHistoryService {
   constructor(private readonly supabaseService: SupabaseService) {}
 
-  async getMonthHistory(date: string, programDayId: string) {
+  /**
+   * The month's sessions of the program's owner — across all their programs,
+   * not just this one. A deleted plan is only ended (`status = 'completed'`),
+   * and its sessions have to stay on the calendar after the next plan starts.
+   * The program id is how the caller is authorized and names the owner.
+   */
+  async getMonthHistory(date: string, programId: string) {
+    const { data: program, error: programError } =
+      await this.supabaseService.supabase
+        .from('user_workout_programs')
+        .select('user_id')
+        .eq('id', programId)
+        .maybeSingle();
+
+    if (programError || !program?.user_id) {
+      if (programError) {
+        console.error('Error fetching workout history:', programError);
+      }
+      return [];
+    }
+
     const dateObj = new Date(date);
 
     // Get first day of the month
@@ -46,18 +66,29 @@ export class WorkoutHistoryService {
     // Query with range filter directly in this method
     const { data, error } = await this.supabaseService.supabase
       .from('workout_logs')
-      .select('id, workout_date,completed')
+      .select(
+        'id, workout_date, completed, user_workout_programs!inner(user_id)',
+      )
       .gte('workout_date', firstDayStr) // greater than or equal to first day of month
       .lt('workout_date', lastDayStr) // less than first day of next month
       .order('workout_date', { ascending: true })
-      .eq('user_workout_program_id', programDayId);
+      .eq('user_workout_programs.user_id', program.user_id);
 
     if (error) {
       console.error('Error fetching workout history:', error);
       return [];
-    } else {
-      return data;
     }
+    // The join is only the filter; callers get the same rows as before.
+    const rows = (data ?? []) as {
+      id: string;
+      workout_date: string;
+      completed: boolean | null;
+    }[];
+    return rows.map(({ id, workout_date, completed }) => ({
+      id,
+      workout_date,
+      completed,
+    }));
   }
 
   async getWorkoutHistoryForUserDay(id: string) {

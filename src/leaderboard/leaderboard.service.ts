@@ -81,11 +81,10 @@ const PAGE_SIZE = 1000;
 /**
  * The first month anyone can win.
  *
- * September 2026 was already half over when badges shipped, and a permanent
- * award for a contest nobody knew they were in is not much of an award. Closed
- * months before this are never scored, so the first badges land on 1 Nov 2026.
+ * September 2026, the month badges shipped in, is scored too. Closed months
+ * before this are never scored.
  */
-const FIRST_SCORED_MONTH = '2026-10';
+const FIRST_SCORED_MONTH = '2026-09';
 
 function one<T>(value: T | T[] | null | undefined): T | null {
   if (!value) return null;

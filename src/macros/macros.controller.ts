@@ -78,7 +78,11 @@ export class MacrosController {
     @Query('offset') offset?: string,
     @Query('date') date?: string,
   ) {
-    await this.accessService.assertSelfOrCoach(req.user.id, userId);
+    await this.accessService.assertSelfOrCoach(
+      req.user.id,
+      userId,
+      'nutrition',
+    );
 
     const parsedLimit = Math.min(
       Math.max(parseInt(limit ?? '', 10) || 20, 1),
@@ -162,7 +166,11 @@ export class MacrosController {
     @Param('userId') userId: string,
     @Req() req: authReq.AuthenticatedRequest,
   ) {
-    await this.accessService.assertSelfOrCoach(req.user.id, userId);
+    await this.accessService.assertSelfOrCoach(
+      req.user.id,
+      userId,
+      'nutrition',
+    );
     return this.macrosService.getUserMacros(userId);
   }
 
@@ -174,7 +182,11 @@ export class MacrosController {
     @Param('day') day: number,
     @Req() req: authReq.AuthenticatedRequest,
   ) {
-    await this.accessService.assertSelfOrCoach(req.user.id, userId);
+    await this.accessService.assertSelfOrCoach(
+      req.user.id,
+      userId,
+      'nutrition',
+    );
     return this.macrosService.getUserDayMacro(userId, day);
   }
 
@@ -184,7 +196,11 @@ export class MacrosController {
     @Body() macros: SetMacrosDto,
     @Req() req: authReq.AuthenticatedRequest,
   ) {
-    await this.accessService.assertSelfOrCoach(req.user.id, userId);
+    await this.accessService.assertSelfOrCoach(
+      req.user.id,
+      userId,
+      'nutrition',
+    );
     const result = await this.macrosService.setUserMacros(
       userId,
       macros,
@@ -200,7 +216,7 @@ export class MacrosController {
     @Param('date') date: string,
     @Req() req: authReq.AuthenticatedRequest,
   ) {
-    await this.accessService.assertSelfOrCoach(req.user.id, id);
+    await this.accessService.assertSelfOrCoach(req.user.id, id, 'nutrition');
     const macros = await this.macrosService.getDailyMacros(
       id,
       localDateStr(date),

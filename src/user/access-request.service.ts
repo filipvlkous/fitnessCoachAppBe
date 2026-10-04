@@ -8,7 +8,7 @@ import {
 } from '@nestjs/common';
 import { SupabaseService } from 'src/supabase/supabase.service';
 import { NotificationsService } from 'src/notifications/notifications.service';
-import { UserService } from './user.service';
+import { AccessService } from 'src/auth/access.service';
 import { CoachDataScope } from './consent.constants';
 import { AccessRequestView } from './dto/access-request.dto';
 
@@ -50,7 +50,7 @@ export class AccessRequestService {
   constructor(
     private readonly supabaseService: SupabaseService,
     private readonly notificationsService: NotificationsService,
-    private readonly userService: UserService,
+    private readonly accessService: AccessService,
   ) {}
 
   private get supabase() {
@@ -70,7 +70,7 @@ export class AccessRequestService {
   ): Promise<{ status: 'created' | 'pending'; id: string }> {
     // Nothing to ask for. Not an error the coach caused, but answering 409
     // rather than sending a pointless notification is the honest reply.
-    const access = await this.userService.getCoachDataAccess(clientId);
+    const access = await this.accessService.getCoachDataAccess(clientId);
     if (access[scope]) {
       throw new ConflictException('This client already shares that with you');
     }

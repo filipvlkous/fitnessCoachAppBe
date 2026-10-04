@@ -37,11 +37,20 @@ export function throttlerTracker(req: Record<string, any>): string {
     }
   }
 
+  return `ip:${requestIp(req)}`;
+}
+
+/**
+ * The caller's address behind nginx — see `throttlerTracker` for why
+ * `X-Real-IP` and not `req.ip`. Also keys `SupabaseAuthGuard`'s cap on failed
+ * token checks: a made-up token gets its own throttler budget above, so the
+ * address is what bounds how many of them reach Supabase.
+ */
+export function requestIp(req: Record<string, any>): string {
+  const headers = (req?.headers ?? {}) as Record<string, unknown>;
   const realIp = headers['x-real-ip'];
-  if (typeof realIp === 'string' && realIp.trim()) {
-    return `ip:${realIp.trim()}`;
-  }
+  if (typeof realIp === 'string' && realIp.trim()) return realIp.trim();
 
   const remote: unknown = req?.ip;
-  return `ip:${typeof remote === 'string' && remote ? remote : 'unknown'}`;
+  return typeof remote === 'string' && remote ? remote : 'unknown';
 }

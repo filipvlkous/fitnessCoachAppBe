@@ -60,10 +60,10 @@ const BOX_HISTORY = 12;
 /**
  * The first month that can be drawn.
  *
- * September 2026 was half over when this shipped, and a draw nobody knew they
- * were in is not a draw. Closed months before this are never settled.
+ * September 2026, the month this shipped in, is drawn too. Closed months
+ * before this are never settled.
  */
-const FIRST_DRAWN_MONTH = '2026-10';
+const FIRST_DRAWN_MONTH = '2026-09';
 
 function one<T>(value: T | T[] | null | undefined): T | null {
   if (!value) return null;

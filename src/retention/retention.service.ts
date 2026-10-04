@@ -10,7 +10,6 @@ import { createHash } from 'crypto';
 import { SupabaseService } from 'src/supabase/supabase.service';
 import { AccessService } from 'src/auth/access.service';
 import { NotificationsService } from 'src/notifications/notifications.service';
-import { UserService } from 'src/user/user.service';
 import {
   dismissalSurvives,
   HALF_WINDOW_DAYS,
@@ -145,7 +144,6 @@ export class RetentionService {
     private readonly supabaseService: SupabaseService,
     private readonly accessService: AccessService,
     private readonly notificationsService: NotificationsService,
-    private readonly userService: UserService,
   ) {
     this.genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   }
@@ -366,7 +364,7 @@ export class RetentionService {
       await Promise.all(
         clientIds.map(
           async (id) =>
-            [id, await this.userService.getCoachDataAccess(id)] as const,
+            [id, await this.accessService.getCoachDataAccess(id)] as const,
         ),
       ),
     );

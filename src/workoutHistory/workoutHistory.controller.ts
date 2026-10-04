@@ -48,6 +48,7 @@ export class WorkoutHistoryController {
     await this.accessService.assertProgramAccess(
       req.user.id,
       user_workout_program_id,
+      'workouts',
     );
     return await this.workoutHistoryService.getMonthHistory(
       date,
@@ -62,7 +63,11 @@ export class WorkoutHistoryController {
     @Param('id') id: string,
     @Req() req: authReq.AuthenticatedRequest,
   ) {
-    await this.accessService.assertWorkoutLogAccess(req.user.id, id);
+    await this.accessService.assertWorkoutLogAccess(
+      req.user.id,
+      id,
+      'workouts',
+    );
     return this.workoutHistoryService.getWorkoutHistoryForUserDayShort(id);
   }
 
@@ -73,7 +78,11 @@ export class WorkoutHistoryController {
     @Param('id') id: string,
     @Req() req: authReq.AuthenticatedRequest,
   ) {
-    await this.accessService.assertWorkoutLogAccess(req.user.id, id);
+    await this.accessService.assertWorkoutLogAccess(
+      req.user.id,
+      id,
+      'workouts',
+    );
     return this.workoutHistoryService.getWorkoutHistoryForUserDay(id);
   }
 
@@ -96,7 +105,7 @@ export class WorkoutHistoryController {
     @Query('month') month: string,
     @Req() req: authReq.AuthenticatedRequest,
   ) {
-    await this.accessService.assertSelfOrCoach(req.user.id, userId);
+    await this.accessService.assertSelfOrCoach(req.user.id, userId, 'workouts');
     return this.workoutHistoryService.getExerciseProgressForMonth(
       userId,
       month,

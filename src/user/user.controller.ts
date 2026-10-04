@@ -28,6 +28,28 @@ import { SupabaseAuthGuard } from 'utils/AuthGuard';
 import { AccessService } from 'src/auth/access.service';
 import * as authReq from 'utils/authenticated-request.interface';
 
+/**
+ * Body-metric fields on `user_profile` and `user`. A coach without the client's
+ * `bodyMetrics` scope still gets the rest of the row (name, bio, avatar), so
+ * these are nulled rather than the whole response refused.
+ */
+const PROFILE_BODY_FIELDS = [
+  'height',
+  'age',
+  'sex',
+  'goal',
+  'activity_level',
+] as const;
+const USER_BODY_FIELDS = ['date_of_birth'] as const;
+
+const withoutFields = <T extends Record<string, unknown>>(
+  row: T,
+  fields: readonly string[],
+): T => ({
+  ...row,
+  ...Object.fromEntries(fields.filter((f) => f in row).map((f) => [f, null])),
+});
+
 @ApiTags('users')
 @ApiBearerAuth()
 @Controller('userController')
@@ -72,7 +94,14 @@ export class UserController {
     @Req() req: authReq.AuthenticatedRequest,
   ) {
     await this.accessService.assertSelfOrCoach(req.user.id, id);
-    return this.userService.getUserById(id);
+    const user = (await this.userService.getUserById(id)) as Record<
+      string,
+      unknown
+    >;
+    if (await this.hidesBodyMetrics(req.user.id, id)) {
+      return withoutFields(user, USER_BODY_FIELDS);
+    }
+    return user;
   }
 
   @Put('user/:id')
@@ -159,11 +188,17 @@ export class UserController {
     @Req() req: authReq.AuthenticatedRequest,
   ) {
     await this.accessService.assertSelfOrCoach(req.user.id, userId);
-    const data = await this.userService.getUserProfile(userId);
+    const data = (await this.userService.getUserProfile(userId)) as Record<
+      string,
+      unknown
+    > | null;
     if (!data) {
       throw new NotFoundException('User profile not found');
     }
 
+    if (await this.hidesBodyMetrics(req.user.id, userId)) {
+      return withoutFields(data, PROFILE_BODY_FIELDS);
+    }
     return data;
   }
 
@@ -173,7 +208,7 @@ export class UserController {
     @Req() req: authReq.AuthenticatedRequest,
     @Query('date') date?: string,
   ) {
-    await this.accessService.assertSelfOrCoach(req.user.id, id);
+    await this.accessService.assertSelfOrCoach(req.user.id, id, 'nutrition');
     const goal = await this.userService.getDailyEntries(
       id,
       date ? localDateStr(date) : localDateStr(new Date()),
@@ -238,7 +273,7 @@ export class UserController {
     @Req() req: authReq.AuthenticatedRequest,
   ) {
     await this.accessService.assertSelfOrCoach(req.user.id, userId);
-    return this.userService.removeCoachRelationByUserId(userId);
+    return this.userService.removeCoachRelationByUserId(userId, req.user.id);
   }
 
   @Delete('coach-relation/:programId/user/:userId')
@@ -249,7 +284,11 @@ export class UserController {
   ) {
     // The athlete themselves or their coach can remove the relation.
     await this.accessService.assertSelfOrCoach(req.user.id, userId);
-    return this.userService.removeCoachRelationByUserId(userId, programId);
+    return this.userService.removeCoachRelationByUserId(
+      userId,
+      req.user.id,
+      programId,
+    );
   }
 
   @Get('weight-history/:id')
@@ -258,7 +297,7 @@ export class UserController {
     @Req() req: authReq.AuthenticatedRequest,
     @Query('limit') limit?: string,
   ) {
-    await this.accessService.assertSelfOrCoach(req.user.id, id);
+    await this.accessService.assertSelfOrCoach(req.user.id, id, 'bodyMetrics');
     return this.userService.getWeightHistory(id, limit ? Number(limit) : 6);
   }
 
@@ -280,7 +319,11 @@ export class UserController {
     @Param('userId') userId: string,
     @Req() req: authReq.AuthenticatedRequest,
   ) {
-    await this.accessService.assertSelfOrCoach(req.user.id, userId);
+    await this.accessService.assertSelfOrCoach(
+      req.user.id,
+      userId,
+      'bodyMetrics',
+    );
     return this.userService.getBodyPhotos(userId);
   }
 
@@ -303,5 +346,15 @@ export class UserController {
       throw new BadRequestException('Only images are allowed');
     }
     return this.userService.addBodyPhoto(userId, file, slot);
+  }
+
+  /** True when a coach is reading a client who does not share body metrics. */
+  private async hidesBodyMetrics(
+    requesterId: string,
+    userId: string,
+  ): Promise<boolean> {
+    if (requesterId === userId) return false;
+    const access = await this.accessService.getCoachDataAccess(userId);
+    return !access.bodyMetrics;
   }
 }

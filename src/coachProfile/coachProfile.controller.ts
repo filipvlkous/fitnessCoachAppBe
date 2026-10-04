@@ -36,7 +36,6 @@ import {
 } from 'utils/user-cache.interceptor';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { AccessService } from 'src/auth/access.service';
-import { UserService } from 'src/user/user.service';
 import { AccessRequestService } from 'src/user/access-request.service';
 import { CreateAccessRequestDto } from 'src/user/dto/access-request.dto';
 import * as authReq from 'utils/authenticated-request.interface';
@@ -49,7 +48,6 @@ export class CoachProfileController {
   constructor(
     private readonly coachProfileService: CoachProfileService,
     private readonly accessService: AccessService,
-    private readonly userService: UserService,
     private readonly accessRequestService: AccessRequestService,
     @Inject(CACHE_MANAGER) private cacheManager: CacheManagerTypes.Cache,
   ) {}
@@ -85,7 +83,7 @@ export class CoachProfileController {
     // set of scopes: "you are not their coach" and "they share nothing with
     // you" are different answers and the app should not conflate them.
     await this.accessService.assertSelfOrCoach(req.user.id, clientId);
-    return this.userService.getCoachDataAccess(clientId);
+    return this.accessService.getCoachDataAccess(clientId);
   }
 
   /**
