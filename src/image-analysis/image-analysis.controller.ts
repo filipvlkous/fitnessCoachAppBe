@@ -49,6 +49,10 @@ export class ImageAnalysisController {
       const analysisJson = await this.imageAnalysisService.analyzeImage(
         analyzeFoodDto.imageBase64,
       );
+      console.log(
+        '[image-analysis] food/analyze result:',
+        JSON.stringify(analysisJson, null, 2),
+      );
       if (!analysisJson) {
         throw new InternalServerErrorException('Failed to analyze the image.');
       }
@@ -58,6 +62,7 @@ export class ImageAnalysisController {
         message: 'Food analysis completed successfully.',
       };
     } catch (error: any) {
+      console.log('[image-analysis] food/analyze error:', error);
       if (error instanceof HttpException) throw error;
       throw new InternalServerErrorException(
         error?.message ?? 'Image analysis failed.',

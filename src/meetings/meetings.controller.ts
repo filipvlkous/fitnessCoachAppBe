@@ -14,6 +14,7 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { MeetingsService } from './meetings.service';
+import { MeetingBriefService } from './meeting-brief.service';
 import { CoachAvailabilityService } from './availability.service';
 import { CreateMeetingDto, RespondMeetingDto } from './dto/meeting.dto';
 import {
@@ -31,6 +32,7 @@ export class MeetingsController {
   constructor(
     private readonly meetingsService: MeetingsService,
     private readonly availabilityService: CoachAvailabilityService,
+    private readonly briefService: MeetingBriefService,
   ) {}
 
   /**
@@ -114,6 +116,28 @@ export class MeetingsController {
     @Req() req: authReq.AuthenticatedRequest,
   ) {
     return this.meetingsService.respond(req.user.id, id, body);
+  }
+
+  /**
+   * GET /meetings/:id/brief?lang=cs&summary=false
+   *
+   * The coach's pre-meeting summary of their client, built from what the
+   * client shares with them. Generated on request, not ahead of time.
+   * `summary=false` skips the model and returns at once (see the service).
+   */
+  @Get(':id/brief')
+  async brief(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('lang') lang: string | undefined,
+    @Query('summary') summary: string | undefined,
+    @Req() req: authReq.AuthenticatedRequest,
+  ) {
+    return this.briefService.getBrief(
+      req.user.id,
+      id,
+      lang === 'en' ? 'en' : 'cs',
+      summary !== 'false',
+    );
   }
 
   /** POST /meetings/:id/cancel — either party calls it off. */
