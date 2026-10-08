@@ -12,6 +12,7 @@ import {
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { ImageAnalysisService } from './image-analysis.service';
+import { PhotoQuotaService } from './photo-quota.service';
 import {
   AnalyzeFoodDto,
   AnalyzeFoodResponseDto,
@@ -29,6 +30,7 @@ import * as authReq from 'utils/authenticated-request.interface';
 export class ImageAnalysisController {
   constructor(
     private readonly imageAnalysisService: ImageAnalysisService,
+    private readonly photoQuotaService: PhotoQuotaService,
     private readonly supabaseService: SupabaseService,
   ) {}
 
@@ -42,9 +44,17 @@ export class ImageAnalysisController {
   // The one endpoint that pays a third party per request, and the one that
   // accepts a 10 MB body to do it. Ten scans a minute is well past how fast a
   // person can photograph meals, and it caps what a stuck client can spend.
+  //
+  // On top of that, the user's own daily allowance and the pause after a
+  // cancelled scan (`PhotoQuotaService`). The scan is booked before Gemini is
+  // called and handed back only if the analysis fails.
   @Throttle({ heavy: { limit: 10, ttl: 60_000 } })
   @Post('food/analyze')
-  async analyzeFoodImage(@Body() analyzeFoodDto: AnalyzeFoodDto) {
+  async analyzeFoodImage(
+    @Body() analyzeFoodDto: AnalyzeFoodDto,
+    @Req() req: authReq.AuthenticatedRequest,
+  ) {
+    const claimId = await this.photoQuotaService.claimScan(req.user.id);
     try {
       const analysisJson = await this.imageAnalysisService.analyzeImage(
         analyzeFoodDto.imageBase64,
@@ -59,15 +69,32 @@ export class ImageAnalysisController {
 
       return {
         data: analysisJson,
+        quota: await this.photoQuotaService.getQuota(req.user.id),
         message: 'Food analysis completed successfully.',
       };
     } catch (error: any) {
       console.log('[image-analysis] food/analyze error:', error);
+      await this.photoQuotaService.refundScan(claimId);
       if (error instanceof HttpException) throw error;
       throw new InternalServerErrorException(
         error?.message ?? 'Image analysis failed.',
       );
     }
+  }
+
+  /** Today's photo allowance and whether scanning is paused. */
+  @Get('photo-quota')
+  async getPhotoQuota(@Req() req: authReq.AuthenticatedRequest) {
+    return { data: await this.photoQuotaService.getQuota(req.user.id) };
+  }
+
+  /**
+   * The athlete cancelled a running scan. It still counts (Gemini bills it),
+   * and scanning pauses for the user's `photo_cooldown_minutes`.
+   */
+  @Post('food/analyze/cancel')
+  async cancelFoodAnalysis(@Req() req: authReq.AuthenticatedRequest) {
+    return { data: await this.photoQuotaService.cancelScan(req.user.id) };
   }
 
   /** Manually add a meal and its ingredients without image analysis. */

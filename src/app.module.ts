@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
+import { SentryGlobalFilter, SentryModule } from '@sentry/nestjs/setup';
 import { CacheModule } from '@nestjs/cache-manager';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -25,7 +26,6 @@ import { JoinModule } from './join/join.module';
 import { MeetingsModule } from './meetings/meetings.module';
 import { RetentionModule } from './retention/retention.module';
 import { LeaderboardModule } from './leaderboard/leaderboard.module';
-import { RewardsModule } from './rewards/rewards.module';
 import { AppVersionModule } from './app-version/app-version.module';
 import { ReportsModule } from './reports/reports.module';
 import { LegalModule } from './legal/legal.module';
@@ -33,6 +33,7 @@ import { throttlerOptions } from './throttler.config';
 
 @Module({
   imports: [
+    SentryModule.forRoot(),
     CacheModule.registerAsync({
       isGlobal: true,
       useFactory: () => {
@@ -92,12 +93,17 @@ import { throttlerOptions } from './throttler.config';
     MeetingsModule,
     RetentionModule,
     LeaderboardModule,
-    RewardsModule,
     AppVersionModule,
     ReportsModule,
     LegalModule,
   ],
   controllers: [AppController],
-  providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
+  providers: [
+    AppService,
+    // Reports unexpected errors (not 4xx HttpExceptions) to Sentry, then
+    // answers the request the way Nest's default filter would.
+    { provide: APP_FILTER, useClass: SentryGlobalFilter },
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+  ],
 })
 export class AppModule {}

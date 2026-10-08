@@ -423,7 +423,7 @@ export class MeetingBriefService {
       - Base every statement strictly on FACTS; never invent or recompute numbers.
       - A section that is null is data the client does not share with the coach. Never mention it, never guess about it.
       - A section with zeros means the client shares it but logged nothing; that may be worth a concern.
-      - "rpe" is the client's own 1-10 rating of how hard a whole workout felt (10 = all-out).
+      - "rpe" is the client's own 1-10 rating of how hard a whole workout felt (10 = all-out). Never write "RPE"; call it "${language === 'en' ? 'effort' : 'náročnost'}".
       - In "lifts", "first" and "last" are the best set in the first and last session of the period; weight null means bodyweight.
       - Compare against "plannedPerWeek" and the nutrition targets where they exist.
       - Do not diagnose reasons you cannot see (injury, illness, motivation) — turn them into questions instead.
