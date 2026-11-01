@@ -3,6 +3,7 @@ import { SupabaseService } from 'src/supabase/supabase.service';
 import { asUtc } from 'utils/as-utc';
 import { localDateStr } from 'utils/getLocalTime';
 import { countWeightPrs, PrSet, PrWorkout } from './feed-prs';
+import { pickLastExerciseSet } from './last-exercise-set';
 
 /** PostgREST's own ceiling; the loop copes with a lower project cap. */
 const FEED_PR_PAGE_SIZE = 1000;
@@ -371,6 +372,56 @@ export class WorkoutHistoryService {
         // Most-trained first.
         .sort((a, b) => b.sessions - a.sessions)
     );
+  }
+
+  // What the user last lifted on one exercise, however long ago. The newest
+  // sets are enough: one workout never logs more than a few dozen of them.
+  async getLastExerciseSet(userId: string, exerciseId: string) {
+    const { data, error } = await this.supabaseService.supabase
+      .from('exercise_logs')
+      .select(
+        `
+        workout_log_id,
+        weight,
+        reps,
+        workout_logs!inner (
+          workout_date,
+          user_workout_programs!inner ( user_id )
+        )
+      `,
+      )
+      .eq('exercises_id', exerciseId)
+      .eq('workout_logs.user_workout_programs.user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    if (error) {
+      console.error('Error fetching last exercise set:', error);
+      throw error;
+    }
+
+    type Row = {
+      workout_log_id: string;
+      weight: number | null;
+      reps: number | null;
+      workout_logs: { workout_date: string } | { workout_date: string }[];
+    };
+
+    const sets = ((data ?? []) as unknown as Row[]).flatMap((row) => {
+      const date = one(row.workout_logs)?.workout_date;
+      return date
+        ? [
+            {
+              workout_log_id: row.workout_log_id,
+              workout_date: date,
+              weight: row.weight,
+              reps: row.reps,
+            },
+          ]
+        : [];
+    });
+
+    return pickLastExerciseSet(sets);
   }
 
   getRecentCoachLogs = async (coachId: string) => {

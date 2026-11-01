@@ -112,6 +112,18 @@ export class WorkoutHistoryController {
     );
   }
 
+  // Latest logged workout of one exercise, with no time limit (self or coach).
+  // Not cached: the logger reads it right after the user logs new sets.
+  @Get('users/:userId/exercises/:exerciseId/last-set')
+  async getLastExerciseSet(
+    @Param('userId') userId: string,
+    @Param('exerciseId') exerciseId: string,
+    @Req() req: authReq.AuthenticatedRequest,
+  ) {
+    await this.accessService.assertSelfOrCoach(req.user.id, userId, 'workouts');
+    return this.workoutHistoryService.getLastExerciseSet(userId, exerciseId);
+  }
+
   // User-scoped cache: with a shared cache one coach's feed could be served
   // to another user on a cache hit, bypassing the access check.
   @UseInterceptors(UserScopedCacheInterceptor)
