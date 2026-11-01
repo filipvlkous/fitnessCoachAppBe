@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   NotFoundException,
   Param,
@@ -226,6 +227,12 @@ export class UserController {
   ) {
     this.accessService.assertSelf(req.user.id, userId);
     if (!code) throw new BadRequestException('code is required');
+    // A coach is only joinable with everything shared — the app asks first,
+    // this is the gate.
+    const access = await this.accessService.getCoachDataAccess(userId);
+    if (!Object.values(access).every(Boolean)) {
+      throw new ForbiddenException('Share all data with the coach to connect');
+    }
     return this.userService.assignUserToCoach(userId, code);
   }
 

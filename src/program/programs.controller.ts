@@ -150,6 +150,18 @@ export class ProgramsController {
     ]);
   }
 
+  // Tells the athlete their program changed, unless they changed it themselves.
+  // The athlete is resolved from the day, not a client-supplied ID.
+  private async notifyAthleteOfDayChange(dayId: string, actorId: string) {
+    const athleteId = await this.programsService.getAthleteIdForDay(dayId);
+    if (athleteId && athleteId !== actorId) {
+      this.notificationsService.notifyUser(athleteId, {
+        title: 'Program Updated',
+        body: 'Your coach has updated your program. Check the app for details.',
+      });
+    }
+  }
+
   private async invalidateDayCache(requesterId: string, dayId: string) {
     const { athleteId, programId, dayNumber } =
       await this.programsService.getDayContext(dayId);
@@ -228,6 +240,12 @@ export class ProgramsController {
       result?.id as string,
     );
     await this.invalidateCoachCache(createDto.coach_id);
+    if (createDto.user_id !== req.user.id) {
+      this.notificationsService.notifyUser(createDto.user_id, {
+        title: 'New Program',
+        body: 'Your coach has created a new training program for you.',
+      });
+    }
     return result;
   }
 
@@ -342,6 +360,7 @@ export class ProgramsController {
     // not touch. Without this a day stays invisible to them until the TTL
     // lapses — and for a solo athlete that is their own screen, one tap later.
     await this.invalidateDayCache(req.user.id, result.id);
+    await this.notifyAthleteOfDayChange(result.id, req.user.id);
     return result;
   }
 
@@ -368,6 +387,7 @@ export class ProgramsController {
       updateDto,
     );
     await this.invalidateDayCache(req.user.id, dayId);
+    await this.notifyAthleteOfDayChange(dayId, req.user.id);
     return result;
   }
 
@@ -379,6 +399,7 @@ export class ProgramsController {
     await this.accessService.assertDayAccess(req.user.id, dayId);
     // Invalidate before deleting; the athlete can't be resolved afterwards.
     await this.invalidateDayCache(req.user.id, dayId);
+    await this.notifyAthleteOfDayChange(dayId, req.user.id);
     return this.programsService.deleteProgramDay(dayId);
   }
 
@@ -422,6 +443,7 @@ export class ProgramsController {
       updateDto.exercises,
     );
     await this.invalidateDayCache(req.user.id, dayId);
+    await this.notifyAthleteOfDayChange(dayId, req.user.id);
     return result;
   }
 
@@ -442,6 +464,7 @@ export class ProgramsController {
 
     if (result?.program_day_id) {
       await this.invalidateDayCache(req.user.id, result.program_day_id);
+      await this.notifyAthleteOfDayChange(result.program_day_id, req.user.id);
     }
     return result;
   }
@@ -458,6 +481,7 @@ export class ProgramsController {
     const result = await this.programsService.removeExerciseFromDay(exerciseId);
     if (result?.program_day_id) {
       await this.invalidateDayCache(req.user.id, result.program_day_id);
+      await this.notifyAthleteOfDayChange(result.program_day_id, req.user.id);
     }
     return result;
   }

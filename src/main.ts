@@ -12,8 +12,11 @@ dotEnvConfig();
 
 async function bootstrap() {
   // Disable the default parsers so the limit below is the only one applied.
+  // `rawBody` keeps the request bytes for webhook signature checks
+  // (`email/auth-hook`).
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bodyParser: false,
+    rawBody: true,
   });
   // Registered before anything else so every response passes through it. The
   // app's payloads are JSON (program weeks, monthly summaries, the product

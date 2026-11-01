@@ -29,6 +29,7 @@ import { LeaderboardModule } from './leaderboard/leaderboard.module';
 import { AppVersionModule } from './app-version/app-version.module';
 import { ReportsModule } from './reports/reports.module';
 import { LegalModule } from './legal/legal.module';
+import { EmailModule } from './email/email.module';
 import { throttlerOptions } from './throttler.config';
 
 @Module({
@@ -96,6 +97,7 @@ import { throttlerOptions } from './throttler.config';
     AppVersionModule,
     ReportsModule,
     LegalModule,
+    EmailModule,
   ],
   controllers: [AppController],
   providers: [

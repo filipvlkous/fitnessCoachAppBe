@@ -1,4 +1,5 @@
 import { NotFoundException } from '@nestjs/common';
+import { LeaderboardService } from 'src/leaderboard/leaderboard.service';
 import { NotificationsService } from 'src/notifications/notifications.service';
 import { SupabaseService } from 'src/supabase/supabase.service';
 import { UserService } from './user.service';
@@ -41,7 +42,8 @@ const serviceWith = (program: boolean) => {
 
   const service = new UserService(
     { supabase: { from } } as unknown as SupabaseService,
-    {} as NotificationsService,
+    { notifyUser: jest.fn() } as unknown as NotificationsService,
+    {} as LeaderboardService,
   );
   return { service, calls };
 };

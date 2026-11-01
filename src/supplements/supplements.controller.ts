@@ -12,6 +12,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { SupplementsService } from './supplements.service';
 import { SupabaseAuthGuard } from 'utils/AuthGuard';
 import { AccessService } from 'src/auth/access.service';
+import { NotificationsService } from 'src/notifications/notifications.service';
 import * as authReq from 'utils/authenticated-request.interface';
 
 @ApiTags('supplements')
@@ -22,6 +23,7 @@ export class SupplementsController {
   constructor(
     private readonly supplementsService: SupplementsService,
     private readonly accessService: AccessService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   @Get(':userId')
@@ -40,7 +42,17 @@ export class SupplementsController {
     @Req() req: authReq.AuthenticatedRequest,
   ) {
     await this.accessService.assertSelfOrCoach(req.user.id, userId);
-    return this.supplementsService.addSupplementToUser(userId, body.id);
+    const result = await this.supplementsService.addSupplementToUser(
+      userId,
+      body.id,
+    );
+    if (userId !== req.user.id) {
+      this.notificationsService.notifyUser(userId, {
+        title: 'Supplement Added',
+        body: 'Your coach has added a supplement to your plan.',
+      });
+    }
+    return result;
   }
 
   @Delete(':userId/:supplementId')

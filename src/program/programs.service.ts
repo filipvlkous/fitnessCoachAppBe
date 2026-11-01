@@ -728,16 +728,6 @@ export class ProgramsService {
       .single();
 
     if (error) throw new InternalServerErrorException(error.message);
-
-    // The assigned-exercise row has no user_id; resolve the athlete via the day.
-    const athleteId = await this.getAthleteIdForDay(data.program_day_id);
-    if (athleteId) {
-      this.notificationsService.notifyUser(athleteId, {
-        title: 'Exercise Updated',
-        body: `Your coach has updated an exercise in your program. Check it out!`,
-      });
-    }
-
     return data;
   }
 
@@ -1006,6 +996,33 @@ export class ProgramsService {
       .single();
 
     if (error) throw new InternalServerErrorException(error.message);
+
+    // The other participant of the log: its coach when the athlete comments,
+    // the athlete otherwise. Resolved from the log, not the request body.
+    const { data: log } = await this.supabase
+      .from('workout_logs')
+      .select('coach_id, user_workout_programs!inner(user_id)')
+      .eq('id', workoutLogId)
+      .maybeSingle();
+    const program = log?.user_workout_programs as
+      | { user_id: string }
+      | { user_id: string }[]
+      | undefined;
+    const athleteId = Array.isArray(program)
+      ? program[0]?.user_id
+      : program?.user_id;
+    const recipientId =
+      userId === athleteId ? (log?.coach_id as string | null) : athleteId;
+    if (recipientId && recipientId !== userId) {
+      this.notificationsService.notifyUser(recipientId, {
+        title:
+          userId === athleteId
+            ? 'New comment from your client'
+            : 'New comment from your coach',
+        body: message.length > 120 ? `${message.slice(0, 117)}…` : message,
+      });
+    }
+
     return data;
   }
 

@@ -59,6 +59,12 @@ describe('pickWinners', () => {
     expect(pickWinners([entry('a', 0, 0, 0), entry('b', 0, 0, 0)])).toEqual([]);
   });
 
+  it('awards nothing on a board only one athlete scored on', () => {
+    const wins = pickWinners([entry('a', 8, 3, 5), entry('b', 0, 0, 4)]);
+
+    expect(wins).toEqual([{ userId: 'a', category: 'foodStreak', value: 5 }]);
+  });
+
   it('is not a contest with one athlete, however much they trained', () => {
     expect(pickWinners([entry('a', 40, 20, 30)])).toEqual([]);
   });

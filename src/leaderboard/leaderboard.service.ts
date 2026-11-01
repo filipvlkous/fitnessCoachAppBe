@@ -135,7 +135,8 @@ export class LeaderboardService {
     if (roster.length === 0) return { month, coachId, entries: [] };
 
     const scored = await this.scoreMonth(roster, month);
-    const wins = await this.fetchWinCounts(roster.map((m) => m.userId));
+    if (scored.length === 0) return { month, coachId, entries: [] };
+    const wins = await this.fetchWinCounts(scored.map((m) => m.userId));
     const entries = scored.map((entry) => ({
       ...entry,
       wins: wins.get(entry.userId) ?? emptyWinCounts(),
@@ -339,18 +340,24 @@ export class LeaderboardService {
       mealDays.set(row.user_id, days);
     }
 
-    // The roster drives the result, not the logs: an athlete who did nothing
-    // this month is still a participant, and seeing themselves last is rather
-    // the point of a competition.
-    return roster.map((member) => ({
-      userId: member.userId,
-      firstName: member.firstName,
-      lastName: member.lastName,
-      avatarUrl: null,
-      workouts: workoutCount.get(member.userId) ?? 0,
-      workoutStreak: longestStreak(workoutDays.get(member.userId) ?? []),
-      foodStreak: longestStreak(mealDays.get(member.userId) ?? []),
-    }));
+    // Only athletes with something logged this month take part — a completed
+    // workout or a meal. Everyone else is left off the board and out of the
+    // count, so a fresh month starts empty instead of as a list of zeros, and
+    // the two-participant minimum for awards counts only people who competed.
+    return roster
+      .filter(
+        (member) =>
+          workoutCount.has(member.userId) || mealDays.has(member.userId),
+      )
+      .map((member) => ({
+        userId: member.userId,
+        firstName: member.firstName,
+        lastName: member.lastName,
+        avatarUrl: null,
+        workouts: workoutCount.get(member.userId) ?? 0,
+        workoutStreak: longestStreak(workoutDays.get(member.userId) ?? []),
+        foodStreak: longestStreak(mealDays.get(member.userId) ?? []),
+      }));
   }
 
   /**
@@ -386,10 +393,11 @@ export class LeaderboardService {
     return rows;
   }
 
-  /** Career badge counts for a set of athletes, in one read. */
-  private async fetchWinCounts(
-    userIds: string[],
-  ): Promise<Map<string, WinCounts>> {
+  /**
+   * Career badge counts for a set of athletes, in one read. Also used by the
+   * coach's client list.
+   */
+  async fetchWinCounts(userIds: string[]): Promise<Map<string, WinCounts>> {
     const rows = await this.fetchAll<{
       user_id: string;
       category: LeaderboardCategory;

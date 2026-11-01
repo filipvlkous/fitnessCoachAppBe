@@ -36,6 +36,7 @@ import {
 } from 'utils/user-cache.interceptor';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { AccessService } from 'src/auth/access.service';
+import { NotificationsService } from 'src/notifications/notifications.service';
 import { AccessRequestService } from 'src/user/access-request.service';
 import { CreateAccessRequestDto } from 'src/user/dto/access-request.dto';
 import * as authReq from 'utils/authenticated-request.interface';
@@ -49,6 +50,7 @@ export class CoachProfileController {
     private readonly coachProfileService: CoachProfileService,
     private readonly accessService: AccessService,
     private readonly accessRequestService: AccessRequestService,
+    private readonly notificationsService: NotificationsService,
     @Inject(CACHE_MANAGER) private cacheManager: CacheManagerTypes.Cache,
   ) {}
 
@@ -233,12 +235,17 @@ export class CoachProfileController {
     if (!(await this.accessService.isCoachOf(coachId, req.user.id))) {
       throw new ForbiddenException('Only connected clients can review a coach');
     }
-    return await this.coachProfileService.addReview(
+    const review = await this.coachProfileService.addReview(
       coachId,
       req.user.id,
       reviewDto.rating,
       reviewDto.comment,
     );
+    this.notificationsService.notifyUser(coachId, {
+      title: 'New Review',
+      body: `A client rated you ${reviewDto.rating}/5.`,
+    });
+    return review;
   }
 
   @Get('review/:coachId')

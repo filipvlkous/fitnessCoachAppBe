@@ -9,6 +9,8 @@ import {
 import { randomBytes } from 'crypto';
 import { NotificationsService } from 'src/notifications/notifications.service';
 import { SupabaseService } from 'src/supabase/supabase.service';
+import { LeaderboardService } from 'src/leaderboard/leaderboard.service';
+import { emptyWinCounts } from 'src/leaderboard/leaderboard.awards';
 import {
   COACH_DATA_SCOPES,
   COACH_SCOPE_KIND,
@@ -63,6 +65,7 @@ export class UserService {
   constructor(
     private readonly supabaseService: SupabaseService,
     private readonly notificationsService: NotificationsService,
+    private readonly leaderboardService: LeaderboardService,
   ) {}
 
   async getAllUsers(userId: string) {
@@ -175,7 +178,30 @@ export class UserService {
         `Error assigning user to coach: ${error.message}`,
       );
     }
+
+    const clientName = await this.fullName(userId, 'A new client');
+    this.notificationsService.notifyUser(data.id, {
+      title: 'New Client Request',
+      body: `${clientName} wants you to be their coach.`,
+    });
     return true;
+  }
+
+  /** Display name for a push body; never throws, falls back to `fallback`. */
+  private async fullName(userId: string, fallback: string): Promise<string> {
+    try {
+      const { data } = await this.supabaseService.supabase
+        .from('user')
+        .select('first_name, last_name')
+        .eq('id', userId)
+        .maybeSingle();
+      return (
+        [data?.first_name, data?.last_name].filter(Boolean).join(' ').trim() ||
+        fallback
+      );
+    } catch {
+      return fallback;
+    }
   }
 
   async getAssignedUsersToCoach(
@@ -210,8 +236,9 @@ export class UserService {
   }
 
   // For the coach's client list: whether each approved client has an active
-  // program, and when they last started a workout. Both are extras — a failed
-  // query leaves its field null and the list still loads. One small query per
+  // program, when they last started a workout, and the leaderboard badges they
+  // have won. All extras — a failed query leaves its field null and the list
+  // still loads. One small query per
   // client for the last workout, which is fine at a coach's scale.
   private async withClientDetails<T extends { status: string; user: unknown }>(
     relations: T[],
@@ -229,7 +256,11 @@ export class UserService {
     if (clientIds.length === 0) return relations;
 
     const supabase = this.supabaseService.supabase;
-    const [programs, ...latest] = await Promise.all([
+    const [wins, programs, ...latest] = await Promise.all([
+      this.leaderboardService.fetchWinCounts(clientIds).catch((err) => {
+        console.error('Error fetching client badges:', err);
+        return null;
+      }),
       supabase
         .from('user_workout_programs')
         .select('user_id')
@@ -271,6 +302,7 @@ export class UserService {
         ...relation,
         has_active_program: withProgram ? withProgram.has(clientId) : null,
         last_workout_at: lastWorkout.get(clientId) ?? null,
+        wins: wins ? (wins.get(clientId) ?? emptyWinCounts()) : null,
       };
     });
   }
@@ -448,6 +480,23 @@ export class UserService {
     }
     if (!data || data.length === 0) {
       throw new NotFoundException('No coach relation found for this user');
+    }
+
+    // The other side of each removed relation: the client when a coach
+    // removes them, every coach when the client leaves.
+    if (coachId) {
+      this.notificationsService.notifyUser(userId, {
+        title: 'Coach Relationship Ended',
+        body: 'Your coach has ended your coaching relationship.',
+      });
+    } else {
+      const clientName = await this.fullName(userId, 'A client');
+      for (const row of data as { coach_id: string }[]) {
+        this.notificationsService.notifyUser(row.coach_id, {
+          title: 'Client Left',
+          body: `${clientName} has ended your coaching relationship.`,
+        });
+      }
     }
 
     // Also remove the program days tied to this program. Skipped when the

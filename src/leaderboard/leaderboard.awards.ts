@@ -41,21 +41,21 @@ export const emptyWinCounts = (): WinCounts => ({
  * badge to whoever's parents picked the earlier letter.
  */
 export function pickWinners(entries: ScoredEntry[]): Win[] {
-  // A group of one is not a contest — the same reason the client hides the
-  // board below two participants.
-  if (entries.length < 2) return [];
-
   const wins: Win[] = [];
 
   for (const category of CATEGORIES) {
-    const best = Math.max(...entries.map((entry) => entry[category]));
-
-    // Nobody wins a board nobody scored on. A month where the whole group
-    // logged no meals has no food-streak champion, rather than crowning
+    // A zero is not on the board at all, the same way the client leaves it off
+    // the list. Nobody wins a board nobody scored on, rather than crowning
     // whoever happens to sort first on zero.
-    if (best <= 0) continue;
+    const scored = entries.filter((entry) => entry[category] > 0);
 
-    for (const entry of entries) {
+    // A board of one is not a contest — the same reason the client hides the
+    // board below two participants.
+    if (scored.length < 2) continue;
+
+    const best = Math.max(...scored.map((entry) => entry[category]));
+
+    for (const entry of scored) {
       if (entry[category] === best) {
         wins.push({ userId: entry.userId, category, value: best });
       }

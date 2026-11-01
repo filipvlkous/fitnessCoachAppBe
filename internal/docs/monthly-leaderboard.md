@@ -42,8 +42,10 @@ start is not a monthly contest.
 Day boundaries are UTC, matching every other meal and workout query in this repo
 (`monthly-summary`, `retention`, `macros` all filter `00:00:00+00`).
 
-The roster drives the response, not the logs: an athlete who did nothing this
-month is still an entry with zeros. Seeing yourself last is rather the point.
+Only athletes with at least one completed workout or one logged meal in the
+month are entries. Everyone else on the roster is left out — not shown and not
+counted — so a new month starts empty and fills as people log, and the
+two-participant minimum (board and awards) counts only people who competed.
 
 ### `completed = true` differs from `retention`
 
@@ -96,6 +98,9 @@ August's group was.
 `GET /leaderboard/badges` returns the caller's own badges for their profile.
 Everyone else's counts ride along on the board itself, in `entry.wins`, career-
 wide rather than per-group — someone who changed coaches keeps their record.
+The coach's client list (`coach-assigned-users` with `details`) carries the same
+counts as `wins` on each approved client, read through the now-public
+`LeaderboardService.fetchWinCounts`; a failed read leaves it null.
 
 ### Awarding
 
@@ -105,10 +110,13 @@ wide rather than per-group — someone who changed coaches keeps their record.
 - **Ties all win.** The board already ranks a tie as a shared first place, and
   splitting two people level on 18 workouts by name would hand a permanent badge
   to whoever's parents picked the earlier letter.
-- **A zero never wins.** A group that logged no meals all month has no
-  food-streak champion, rather than crowning whoever sorts first on nothing.
-- **A group of one is not a contest**, matching the client hiding the board
-  below two participants.
+- **A zero is not competing.** Each board is judged only among athletes who
+  scored above zero on it — the client leaves zeros off the list too. A group
+  that logged no meals all month has no food-streak champion.
+- **A board of one is not a contest.** Fewer than two non-zero athletes on a
+  board means no badge for it, matching the client hiding the board below two
+  participants. One athlete training while everyone else only logged meals wins
+  nothing for workouts.
 
 Daily rather than monthly, on purpose. A job that fires once at a month boundary
 and happens to land in a deploy or an outage loses that month permanently. Daily

@@ -7,5 +7,7 @@ import { SupabaseModule } from 'src/supabase/supabase.module';
   imports: [SupabaseModule],
   controllers: [LeaderboardController],
   providers: [LeaderboardService],
+  // UserService puts each client's badge counts on the coach's client list.
+  exports: [LeaderboardService],
 })
 export class LeaderboardModule {}
